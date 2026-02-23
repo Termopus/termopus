@@ -1,0 +1,165 @@
+# =============================================================================
+# Termopus .gitignore
+# =============================================================================
+
+# =============================================================================
+# Secrets & Environment (CRITICAL - NEVER COMMIT)
+# =============================================================================
+.env
+.env.*
+.dev.vars
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials.json
+service-account*.json
+GoogleService-Info.plist
+
+# =============================================================================
+# Flutter / Dart
+# =============================================================================
+app/.dart_tool/
+app/.packages
+app/.pub-cache/
+app/.pub/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/*.iml
+app/.metadata
+app/pubspec.lock
+
+# Flutter iOS
+app/ios/Pods/
+app/ios/.symlinks/
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Flutter/Generated.xcconfig
+app/ios/Flutter/ephemeral/
+app/ios/Flutter/app.flx
+app/ios/Flutter/app.zip
+app/ios/Flutter/flutter_assets/
+app/ios/ServiceDefinitions.json
+app/ios/Runner/GeneratedPluginRegistrant.*
+
+# Flutter Android
+app/android/build/
+app/android/.gradle/
+app/android/local.properties
+app/android/*.iml
+app/android/key.properties
+app/android/app/debug/
+app/android/app/profile/
+app/android/app/release/
+app/android/app/*.keystore
+app/android/app/*.jks
+
+# =============================================================================
+# Rust / Cargo
+# =============================================================================
+bridge/target/
+bridge/Cargo.lock
+bridge/**/*.rs.bk
+bridge/*.pdb
+
+# =============================================================================
+# Node.js / Cloudflare Workers
+# =============================================================================
+node_modules/
+relay_worker/node_modules/
+provisioning_api/node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Wrangler
+.wrangler/
+.dev.vars
+
+# =============================================================================
+# IDEs & Editors
+# =============================================================================
+# VSCode
+.vscode/
+*.code-workspace
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Xcode
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# =============================================================================
+# OS Files
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# =============================================================================
+# Build Outputs
+# =============================================================================
+dist/
+out/
+*.app
+*.ipa
+*.apk
+*.aab
+
+# =============================================================================
+# Testing & Coverage
+# =============================================================================
+coverage/
+*.lcov
+.nyc_output/
+
+# =============================================================================
+# Claude Code
+# =============================================================================
+.claude/settings.local.json
+CLAUDE.md
+AI_CONTEXT.md
+# mTLS certificates (DO NOT COMMIT)
+certs/
+.ca/
+*.dmg
+
+# =============================================================================
+# Scripts / Generated
+# =============================================================================
+scripts/test_vectors.json
+
+# =============================================================================
+# Git Worktrees
+# =============================================================================
+.worktrees/
+
+# =============================================================================
+# Merge conflict artifacts
+# =============================================================================
+*.orig
+
+# =============================================================================
+# Android SDK (install separately)
+# =============================================================================
+app/build-tools/
+app/platform-tools/
+app/platforms/

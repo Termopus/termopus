@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Discussion
+    url: https://github.com/Termopus/termopus/discussions
+    about: Ask questions, share ideas, or chat with the community
+  - name: Security Vulnerability
+    url: https://github.com/Termopus/termopus/blob/main/SECURITY.md
+    about: Do not open a public issue for security vulnerabilities. See SECURITY.md for responsible disclosure.

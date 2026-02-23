@@ -1,0 +1,118 @@
+[package]
+name = "termopus-bridge"
+version = "0.1.0"
+edition = "2021"
+autobins = false
+authors = ["Termopus Contributors"]
+description = "Bridge agent for Termopus - wraps Claude Code and relays to phone"
+
+[[bin]]
+name = "termopus"
+path = "src/main.rs"
+
+[[bin]]
+name = "termopus-hook"
+path = "src/bin/termopus-hook.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# WebSocket
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util = "0.3"
+
+# Crypto
+ring = "0.17"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+zeroize = "1"
+elliptic-curve = { version = "0.13", features = ["sec1"] }
+ed25519-dalek = "2.0"
+rand = "0.8"
+argon2 = "0.5"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# QR code
+qrcode = "0.13"
+image = "0.24"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Config storage
+dirs = "5.0"
+toml = "0.8"
+indexmap = "2"
+
+# Secure storage (macOS Keychain, Linux secret-service)
+keyring = "2"
+
+# Error handling
+anyhow = "1.0"
+
+# POSIX signals (SIGINT for interrupt)
+libc = "0.2"
+thiserror = "1.0"
+
+# Encoding
+base64 = "0.21"
+hex = "0.4"
+
+# File transfer
+sha2 = "0.10"
+uuid = { version = "1.7", features = ["v4"] }
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+walkdir = "2.4"
+
+# HTTP client (for proxying requests to localhost)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# System info
+hostname = "0.3"
+
+# Regex
+regex = "1.10"
+
+# Filesystem watching (kqueue on macOS, inotify on Linux)
+notify = "6.1"
+
+# GUI
+eframe = "0.29"
+egui = "0.29"
+egui_extras = { version = "0.29", features = ["image"] }
+
+# Menu bar / System tray
+tray-icon = "0.14"
+muda = "0.11"
+crossbeam-channel = "0.5"
+
+# Optimize dependencies in dev builds (egui/crypto are unusably slow at opt-level 0)
+[profile.dev.package."*"]
+opt-level = 2
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.10"
+
+# macOS app bundle configuration
+[package.metadata.bundle]
+name = "Termopus"
+identifier = "com.termopus.bridge"
+icon = ["../dist/Termopus.app/Contents/Resources/Termopus.icns"]
+resources = ["resources/tray_icon.png", "resources/tray_icon@2x.png"]
+version = "1.0.0"
+copyright = "Copyright © 2026 Termopus"
+category = "Developer Tool"
+short_description = "Control Claude Code from your phone"
+long_description = "Termopus lets you control Claude Code remotely from your phone with secure end-to-end encryption."
+osx_minimum_system_version = "11.0"

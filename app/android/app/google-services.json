@@ -1,0 +1,24 @@
+{
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "termopus-placeholder",
+    "storage_bucket": "termopus-placeholder.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+        "android_client_info": {
+          "package_name": "com.termopus.app"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "PLACEHOLDER_API_KEY_replace_with_your_firebase_config"
+        }
+      ],
+      "services": {}
+    }
+  ],
+  "configuration_version": "1"
+}

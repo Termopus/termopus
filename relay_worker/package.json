@@ -1,0 +1,20 @@
+{
+  "name": "termopus-relay",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev --env dev",
+    "dev:local": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:dev": "wrangler deploy --env dev",
+    "tail": "wrangler tail",
+    "tail:dev": "wrangler tail --env dev",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.18",
+    "wrangler": "^3.24.0"
+  }
+}

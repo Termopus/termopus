@@ -1,0 +1,74 @@
+name: termopus
+description: Termopus - Control Claude Code from your phone with bank-grade security.
+version: 1.0.0+1
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.11.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  flutter_riverpod: ^3.2.1
+  riverpod_annotation: ^4.0.2
+
+  # Models
+  freezed_annotation: ^3.1.0
+  json_annotation: ^4.11.0
+
+  # UI
+  flutter_markdown_plus: ^1.0.7
+  flutter_highlight: ^0.7.0
+  mobile_scanner: ^7.2.0
+  flutter_animate: ^4.5.2
+
+  # Push notifications (optional — app works without Firebase, see README)
+  firebase_core: ^4.4.0
+  firebase_messaging: ^16.1.1
+
+  # Storage (non-sensitive only)
+  shared_preferences: ^2.5.4
+
+  # Browser
+  webview_flutter: ^4.13.1
+
+  # File Transfer
+  file_picker: ^10.3.10
+  image_picker: ^1.2.1
+  mime: ^2.0.0
+  open_filex: ^4.7.0
+  share_plus: ^12.0.1
+  path_provider: ^2.1.5
+
+  # URL handling
+  url_launcher: ^6.3.2
+
+  # Utils
+  go_router: ^17.1.0
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: ^2.11.1
+  freezed: ^3.2.5
+  json_serializable: ^6.13.0
+  riverpod_generator: ^4.0.3
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/launcher_icon.png"
+  remove_alpha_ios: true
+  adaptive_icon_background: "#1A1B2E"
+  adaptive_icon_foreground: "assets/images/launcher_icon.png"
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/

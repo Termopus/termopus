@@ -1,0 +1,102 @@
+name = "termopus-relay"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# =============================================================================
+# PRODUCTION ENVIRONMENT (default)
+# =============================================================================
+
+# Custom domain (no wildcards allowed)
+[[routes]]
+pattern = "YOUR_RELAY_DOMAIN"
+custom_domain = true
+
+# Durable Objects for WebSocket sessions
+[durable_objects]
+bindings = [
+  { name = "SESSIONS", class_name = "SessionRelay" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionRelay"]
+
+# KV for persisting FCM tokens across DO evictions
+# Run: wrangler kv namespace create FCM_TOKENS
+# Then paste the ID below
+[[kv_namespaces]]
+binding = "FCM_TOKENS"
+id = "YOUR_FCM_TOKENS_KV_ID"
+
+# KV for provisioned device certificates (shared with provisioning API)
+# Run: wrangler kv namespace create PROVISIONED_DEVICES
+# Use the SAME ID as PROVISION_KV in provisioning_api/wrangler.toml
+[[kv_namespaces]]
+binding = "PROVISIONED_DEVICES"
+id = "YOUR_PROVISION_KV_ID"
+
+# Subscription state per device (shared with provisioning API)
+# Run: wrangler kv namespace create SUBSCRIPTIONS
+# Use the SAME ID as SUBSCRIPTIONS in provisioning_api/wrangler.toml
+[[kv_namespaces]]
+binding = "SUBSCRIPTIONS"
+id = "YOUR_SUBSCRIPTIONS_KV_ID"
+
+[vars]
+# mTLS client certificates: always "on" for OSS (sync removes this line, relay defaults to "on")
+# Subscription enforcement: off | log | new_only | on
+SUBSCRIPTION_ENFORCEMENT = "off"
+MAX_PHONES_PER_SESSION = "3"
+MAX_BRIDGES_PER_DEVICE = "5"
+# Apple Developer Team ID — only needed for iOS App Attest. Leave as-is if not using iOS.
+APPLE_TEAM_ID = "YOUR_APPLE_TEAM_ID"
+APPLE_APP_ID = "com.termopus.app"
+
+# =============================================================================
+# DEVELOPMENT ENVIRONMENT
+# =============================================================================
+[env.dev]
+
+[[env.dev.routes]]
+pattern = "YOUR_RELAY_DEV_DOMAIN"
+custom_domain = true
+
+[env.dev.durable_objects]
+bindings = [
+  { name = "SESSIONS", class_name = "SessionRelay" }
+]
+
+[[env.dev.migrations]]
+tag = "v1"
+new_sqlite_classes = ["SessionRelay"]
+
+[[env.dev.kv_namespaces]]
+binding = "FCM_TOKENS"
+id = "YOUR_FCM_TOKENS_KV_ID_DEV"
+
+[[env.dev.kv_namespaces]]
+binding = "PROVISIONED_DEVICES"
+id = "YOUR_PROVISION_KV_ID_DEV"
+
+# TODO: Replace with real namespace ID after creation
+[[env.dev.kv_namespaces]]
+binding = "SUBSCRIPTIONS"
+id = "YOUR_SUBSCRIPTIONS_KV_ID_DEV"
+
+[env.dev.vars]
+SUBSCRIPTION_ENFORCEMENT = "off"
+MAX_PHONES_PER_SESSION = "3"
+MAX_BRIDGES_PER_DEVICE = "5"
+APPLE_TEAM_ID = "YOUR_APPLE_TEAM_ID"
+APPLE_APP_ID = "com.termopus.app"
+
+# =============================================================================
+# Secrets (set via `wrangler secret put` for each env):
+# wrangler secret put FCM_PROJECT_ID
+# wrangler secret put FCM_SERVICE_ACCOUNT_EMAIL
+# wrangler secret put FCM_SERVICE_ACCOUNT_KEY
+# wrangler secret put FCM_PROJECT_ID --env dev
+# wrangler secret put FCM_SERVICE_ACCOUNT_EMAIL --env dev
+# wrangler secret put FCM_SERVICE_ACCOUNT_KEY --env dev
+# =============================================================================

@@ -1,0 +1,89 @@
+name = "termopus-provisioning"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# =============================================================================
+# PRODUCTION ENVIRONMENT (default)
+# =============================================================================
+
+# Custom domain (auto-creates DNS)
+[[routes]]
+pattern = "YOUR_API_DOMAIN"
+custom_domain = true
+
+[vars]
+APPLE_APP_ID = "com.termopus.app"
+# Apple Developer Team ID — only needed for iOS App Attest
+APPLE_TEAM_ID = "YOUR_APPLE_TEAM_ID"
+ANDROID_PACKAGE_NAME = "com.termopus.app"
+# CORS origins — use "*" for development, restrict for production
+ALLOWED_ORIGINS = "https://YOUR_DOMAIN,https://YOUR_DOMAIN"
+# Subscription enforcement: off | log | new_only | on
+SUBSCRIPTION_ENFORCEMENT = "off"
+# Device integrity (Play Integrity / App Attest): off | log | on
+# Keep "off" for self-hosted OSS deployments
+REQUIRE_DEVICE_INTEGRITY = "off"
+# Android Key Attestation chain: off | log | on
+REQUIRE_KEY_ATTESTATION = "off"
+# Allow sideloaded/debug APKs (set to "false" for production with Play Store)
+ALLOW_SIDELOADED = "true"
+
+[[kv_namespaces]]
+binding = "PROVISION_KV"
+id = "YOUR_PROVISION_KV_ID"
+
+# Subscription state per device (created via: wrangler kv:namespace create SUBSCRIPTIONS)
+# TODO: Replace with real namespace ID after creation
+[[kv_namespaces]]
+binding = "SUBSCRIPTIONS"
+id = "YOUR_SUBSCRIPTIONS_KV_ID"
+
+# =============================================================================
+# DEVELOPMENT ENVIRONMENT
+# =============================================================================
+[env.dev]
+
+[[env.dev.routes]]
+pattern = "YOUR_API_DEV_DOMAIN"
+custom_domain = true
+
+[env.dev.vars]
+APPLE_APP_ID = "com.termopus.app"
+APPLE_TEAM_ID = "YOUR_APPLE_TEAM_ID"
+ANDROID_PACKAGE_NAME = "com.termopus.app"
+ALLOWED_ORIGINS = "https://YOUR_DEV_DOMAIN,https://YOUR_DOMAIN"
+SUBSCRIPTION_ENFORCEMENT = "off"
+# Require MEETS_DEVICE_INTEGRITY minimum: off | log | on
+REQUIRE_DEVICE_INTEGRITY = "off"
+# Require Android Key Attestation chain: off | log | on
+REQUIRE_KEY_ATTESTATION = "off"
+# Allow sideloaded/debug APKs to skip certificate digest check
+ALLOW_SIDELOADED = "true"
+
+[[env.dev.kv_namespaces]]
+binding = "PROVISION_KV"
+id = "YOUR_PROVISION_KV_ID_DEV"
+
+# TODO: Replace with real namespace ID after creation
+[[env.dev.kv_namespaces]]
+binding = "SUBSCRIPTIONS"
+id = "YOUR_SUBSCRIPTIONS_KV_ID_DEV"
+
+# =============================================================================
+# Secrets (set via `wrangler secret put` for each env)
+#
+# REQUIRED (only when MTLS_ENFORCEMENT="on" on the relay):
+#   wrangler secret put CA_PRIVATE_KEY       # PEM-encoded EC/RSA private key
+#   wrangler secret put CA_CERTIFICATE       # PEM-encoded X.509 CA certificate
+#
+# OPTIONAL (for enhanced features):
+#   wrangler secret put CF_ACCOUNT_ID                # Cloudflare Access integration
+#   wrangler secret put CF_ACCESS_CLIENT_ID
+#   wrangler secret put CF_ACCESS_CLIENT_SECRET
+#   wrangler secret put GOOGLE_PLAY_INTEGRITY_KEY    # Play Integrity (REQUIRE_DEVICE_INTEGRITY="on")
+#   wrangler secret put ANDROID_CERTIFICATE_DIGESTS  # APK signing verification
+#   wrangler secret put ADMIN_API_TOKEN              # Admin endpoints
+#
+# For dev env, add --env dev to each command above.
+# =============================================================================
