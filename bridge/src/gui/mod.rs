@@ -130,42 +130,18 @@ fn load_bundled_tray_icon() -> Option<tray_icon::Icon> {
 }
 
 /// Load an app icon for the eframe window (fixes the generic "e" icon).
-/// Checks app bundle Resources first, then project assets/ for development.
+/// The icon is embedded in the binary so it works everywhere — .app bundles,
+/// development builds, and headless installs.
 fn load_window_icon() -> Option<egui::IconData> {
-    let exe = std::env::current_exe().ok()?;
-    let exe_dir = exe.parent()?;
-
-    let mut candidates = vec![];
-
-    // 1. App bundle Resources (when running as .app)
-    let resources = exe_dir.parent()?.join("Resources");
-    candidates.push(resources.join("icon_128x128.png"));
-    candidates.push(resources.join("Termopus.icns"));
-
-    // 2. Project assets/ (development: target/release/ → project root)
-    if let Some(project_root) = exe_dir.parent().and_then(|p| p.parent()) {
-        candidates.push(project_root.join("assets/icon_128x128.png"));
-    }
-    // 3. Bridge subdir (development: bridge/target/release/ → project root)
-    if let Some(project_root) = exe_dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
-        candidates.push(project_root.join("assets/icon_128x128.png"));
-    }
-
-    for path in &candidates {
-        if let Ok(img) = image::open(path) {
-            let rgba_img = img.to_rgba8();
-            let (w, h) = rgba_img.dimensions();
-            let pixels = rgba_img.into_raw();
-            tracing::info!("Loaded window icon from: {:?}", path);
-            return Some(egui::IconData {
-                rgba: pixels,
-                width: w,
-                height: h,
-            });
-        }
-    }
-
-    None
+    static ICON_PNG: &[u8] = include_bytes!("../../resources/icon_128x128.png");
+    let img = image::load_from_memory(ICON_PNG).ok()?;
+    let rgba_img = img.to_rgba8();
+    let (w, h) = rgba_img.dimensions();
+    Some(egui::IconData {
+        rgba: rgba_img.into_raw(),
+        width: w,
+        height: h,
+    })
 }
 
 /// Reorder text using the Unicode Bidirectional Algorithm so that RTL
@@ -239,47 +215,24 @@ fn configure_fonts(ctx: &egui::Context) {
 
 /// Set the macOS dock icon using NSApplication API.
 /// This replaces the default egui "e" icon with the Termopus icon.
+/// The icon is embedded in the binary so it works everywhere.
 #[cfg(target_os = "macos")]
 fn set_macos_dock_icon() {
     use cocoa::appkit::{NSApp, NSApplication, NSImage};
     use cocoa::base::nil;
     use cocoa::foundation::NSData;
 
-    let exe = match std::env::current_exe() {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    let exe_dir = match exe.parent() {
-        Some(d) => d.to_path_buf(),
-        None => return,
-    };
+    static ICON_PNG: &[u8] = include_bytes!("../../resources/icon_128x128.png");
 
-    let mut candidates = vec![];
-    if let Some(contents) = exe_dir.parent() {
-        candidates.push(contents.join("Resources/icon_128x128.png"));
-    }
-    if let Some(root) = exe_dir.parent().and_then(|p| p.parent()) {
-        candidates.push(root.join("assets/icon_128x128.png"));
-    }
-    if let Some(root) = exe_dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
-        candidates.push(root.join("assets/icon_128x128.png"));
-    }
-
-    for path in &candidates {
-        if let Ok(data) = std::fs::read(path) {
-            unsafe {
-                let ns_data = NSData::dataWithBytes_length_(
-                    nil,
-                    data.as_ptr() as *const std::ffi::c_void,
-                    data.len() as u64,
-                );
-                let ns_image = NSImage::initWithData_(NSImage::alloc(nil), ns_data);
-                if !ns_image.is_null() {
-                    NSApp().setApplicationIconImage_(ns_image);
-                    tracing::info!("Set macOS dock icon from: {:?}", path);
-                }
-            }
-            return;
+    unsafe {
+        let ns_data = NSData::dataWithBytes_length_(
+            nil,
+            ICON_PNG.as_ptr() as *const std::ffi::c_void,
+            ICON_PNG.len() as u64,
+        );
+        let ns_image = NSImage::initWithData_(NSImage::alloc(nil), ns_data);
+        if !ns_image.is_null() {
+            NSApp().setApplicationIconImage_(ns_image);
         }
     }
 }
