@@ -87,6 +87,8 @@ The **bridge** runs alongside Claude Code on your computer. It connects to a **C
 
 ## Quick Start
 
+> **Termopus uses your own Cloudflare account** to host the relay and provisioning API. This keeps your data under your control — no third-party servers. You'll need a [free Cloudflare account](https://dash.cloudflare.com/sign-up) before starting.
+
 ### Prerequisites
 
 | Tool | Version | Install |
@@ -104,7 +106,7 @@ The **bridge** runs alongside Claude Code on your computer. It connects to a **C
 ```bash
 git clone https://github.com/Termopus/termopus.git
 cd termopus
-wrangler login
+wrangler login   # opens browser to authenticate with your Cloudflare account
 ```
 
 **macOS / Linux:**
