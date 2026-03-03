@@ -113,8 +113,43 @@ mod commands {
     use crate::session::{self, create_shared_manager};
     use std::collections::HashMap;
 
+    /// Substring present in placeholder relay URLs after OSS sync.
+    const RELAY_PLACEHOLDER_MARKER: &str = "YOUR_RELAY_URL";
+
+    /// Check if a relay URL is a placeholder (OSS build with unconfigured relay).
+    fn is_placeholder_relay(url: &str) -> bool {
+        url.contains(RELAY_PLACEHOLDER_MARKER)
+    }
+
+    /// Determine the effective relay URL.
+    ///
+    /// Returns `Some(url)` if ready to use, `None` if user needs to be prompted.
+    /// Resolution: CLI (if not placeholder) → saved config → None (needs prompt).
+    fn resolve_relay_url(cli_relay: &str) -> Option<String> {
+        if !is_placeholder_relay(cli_relay) {
+            return Some(cli_relay.to_string());
+        }
+        storage::get_saved_relay_url()
+    }
+
     /// Run in headless mode — prints QR in terminal, single session.
     pub fn run_headless_mode(relay_url: &str) -> Result<()> {
+        // Resolve relay URL (check for placeholder + saved config)
+        let effective_url = match resolve_relay_url(relay_url) {
+            Some(url) => url,
+            None => {
+                eprintln!("\x1b[1;31mError: Relay URL not configured\x1b[0m\n");
+                eprintln!("This is an open-source build that requires a self-hosted relay.");
+                eprintln!("Configure your relay URL using one of these methods:\n");
+                eprintln!("  1. Pass --relay flag:");
+                eprintln!("     termopus --headless --relay wss://your-relay.workers.dev\n");
+                eprintln!("  2. Run GUI mode first (saves URL to config):");
+                eprintln!("     termopus\n");
+                eprintln!("Deploy your own relay from: relay_worker/");
+                std::process::exit(1);
+            }
+        };
+
         storage::sweep_legacy_keys().unwrap_or_else(|e| {
             tracing::warn!("Legacy key sweep failed: {}", e);
         });
@@ -135,7 +170,7 @@ mod commands {
         let rt = Arc::new(tokio::runtime::Runtime::new()?);
 
         // Spawn a single session
-        spawn_session_inner(&rt, &manager, &handles, relay_url, None);
+        spawn_session_inner(&rt, &manager, &handles, &effective_url, None);
 
         let session_id = {
             let mgr = manager.blocking_read();
@@ -144,7 +179,7 @@ mod commands {
 
         println!("\x1b[1;36mTermopus Bridge\x1b[0m (headless mode)");
         println!("Session: {}", &session_id[..12.min(session_id.len())]);
-        println!("Relay:   {}", relay_url);
+        println!("Relay:   {}", effective_url);
         println!();
 
         // Block on async loop: wait for QR, print it, then wait for Ctrl+C
@@ -213,12 +248,10 @@ mod commands {
 
     /// Run in GUI mode with native window (multi-session)
     pub fn run_gui_mode(relay_url: &str) -> Result<()> {
-        // Sweep legacy key files from older versions that persisted secrets to disk
         storage::sweep_legacy_keys().unwrap_or_else(|e| {
             tracing::warn!("Legacy key sweep failed: {}", e);
         });
 
-        // Configure Claude Code hooks once at app startup
         match crate::hooks::config::find_hook_binary() {
             Ok(hook_path) => {
                 if let Err(e) = crate::hooks::config::configure_hooks(&hook_path) {
@@ -232,38 +265,76 @@ mod commands {
 
         let manager = create_shared_manager();
         let handles: SessionHandles = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
-
-        // Create a tokio runtime for session tasks
         let rt = Arc::new(tokio::runtime::Runtime::new()?);
-
-        // Channel for GUI to request new sessions
         let (new_session_tx, new_session_rx) = std::sync::mpsc::channel::<()>();
 
-        // Crash recovery: check for an orphaned session from a previous unclean exit.
-        // Generate a fresh relay room (new session ID) but migrate the .claude_sid
-        // file so the new session can --resume the Claude conversation.
-        let crash_recovery_id = if let Some(old_id) = storage::find_orphaned_session() {
-            let new_id = generate_session_id();
-            tracing::info!("Crash recovery: migrating {} → {}", &old_id[..8.min(old_id.len())], &new_id[..8]);
-            if storage::migrate_crash_recovery(&old_id, &new_id) {
-                Some(new_id)
+        // Resolve relay URL: real URL, saved config, or needs prompt
+        let resolved = resolve_relay_url(relay_url);
+        let needs_relay_prompt = resolved.is_none();
+        let effective_url = resolved.unwrap_or_default();
+
+        // Shared relay URL — GUI writes on first-run setup, orchestrator reads
+        let relay_url_shared = Arc::new(std::sync::Mutex::new(effective_url.clone()));
+
+        // Pending crash recovery ID — consumed by the first session spawn
+        let pending_crash_recovery: Arc<std::sync::Mutex<Option<String>>> =
+            Arc::new(std::sync::Mutex::new(None));
+
+        if !needs_relay_prompt {
+            // Normal path: relay URL is known, spawn first session immediately
+            let crash_recovery_id = if let Some(old_id) = storage::find_orphaned_session() {
+                let new_id = generate_session_id();
+                tracing::info!(
+                    "Crash recovery: migrating {} -> {}",
+                    &old_id[..8.min(old_id.len())],
+                    &new_id[..8]
+                );
+                if storage::migrate_crash_recovery(&old_id, &new_id) {
+                    Some(new_id)
+                } else {
+                    None
+                }
             } else {
                 None
-            }
+            };
+            spawn_session_inner(&rt, &manager, &handles, &effective_url, crash_recovery_id);
         } else {
-            None
-        };
-        // Use the migrated ID (which has the .claude_sid file) or generate fresh.
-        spawn_session_inner(&rt, &manager, &handles, relay_url, crash_recovery_id);
+            // Relay prompt path: defer session spawn until GUI provides URL.
+            if let Some(old_id) = storage::find_orphaned_session() {
+                let new_id = generate_session_id();
+                tracing::info!(
+                    "Crash recovery (deferred): migrating {} -> {}",
+                    &old_id[..8.min(old_id.len())],
+                    &new_id[..8]
+                );
+                if storage::migrate_crash_recovery(&old_id, &new_id) {
+                    *pending_crash_recovery.lock().unwrap() = Some(new_id);
+                }
+            }
+        }
 
-        // Orchestrator thread: listens for "new session" requests from GUI
+        // Orchestrator thread: spawns sessions on demand from GUI
         let rt_clone = Arc::clone(&rt);
         let manager_clone = Arc::clone(&manager);
         let handles_clone = Arc::clone(&handles);
-        let relay_url_owned = relay_url.to_string();
+        let relay_shared_clone = Arc::clone(&relay_url_shared);
+        let pending_cr_clone = Arc::clone(&pending_crash_recovery);
         std::thread::spawn(move || {
             for _ in new_session_rx {
-                spawn_session(&rt_clone, &manager_clone, &handles_clone, &relay_url_owned);
+                let relay = relay_shared_clone.lock().unwrap().clone();
+                if relay.is_empty() || is_placeholder_relay(&relay) {
+                    tracing::warn!("Orchestrator: relay URL not configured, skipping spawn");
+                    continue;
+                }
+                // Consume pending crash recovery ID on first spawn
+                let resume_id = pending_cr_clone.lock().unwrap().take();
+                spawn_session_inner(
+                    &rt_clone,
+                    &manager_clone,
+                    &handles_clone,
+                    &relay,
+                    resume_id,
+                );
             }
         });
 
@@ -272,13 +343,13 @@ mod commands {
             manager.clone(),
             handles.clone(),
             new_session_tx,
-            relay_url.to_string(),
+            effective_url,
+            needs_relay_prompt,
+            Arc::clone(&relay_url_shared),
         )
         .map_err(|e| anyhow::anyhow!("GUI error: {}", e));
 
-        // Remove hooks at app shutdown (rules are per-session via --append-system-prompt)
         crate::hooks::config::remove_hooks().ok();
-
         result
     }
 
@@ -286,15 +357,6 @@ mod commands {
     ///
     /// If `resume_id` is provided, reuse that session ID (for crash recovery).
     /// Otherwise generate a fresh one.
-    fn spawn_session(
-        rt: &Arc<tokio::runtime::Runtime>,
-        manager: &SharedBridgeManager,
-        handles: &SessionHandles,
-        relay_url: &str,
-    ) {
-        spawn_session_inner(rt, manager, handles, relay_url, None);
-    }
-
     fn spawn_session_inner(
         rt: &Arc<tokio::runtime::Runtime>,
         manager: &SharedBridgeManager,
@@ -366,5 +428,42 @@ mod commands {
         use rand::Rng;
         let bytes: [u8; 16] = rand::thread_rng().gen();
         hex::encode(bytes)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_managed_relay_not_placeholder() {
+            assert!(!is_placeholder_relay("wss://relay.example.com"));
+        }
+
+        #[test]
+        fn test_oss_relay_is_placeholder() {
+            assert!(is_placeholder_relay("wss://YOUR_RELAY_URL"));
+        }
+
+        #[test]
+        fn test_custom_relay_not_placeholder() {
+            assert!(!is_placeholder_relay("wss://my-relay.workers.dev"));
+        }
+
+        #[test]
+        fn test_localhost_not_placeholder() {
+            assert!(!is_placeholder_relay("ws://localhost:8788"));
+        }
+
+        #[test]
+        fn test_resolve_managed_build() {
+            let result = resolve_relay_url("wss://relay.example.com");
+            assert_eq!(result, Some("wss://relay.example.com".to_string()));
+        }
+
+        #[test]
+        fn test_resolve_explicit_override() {
+            let result = resolve_relay_url("wss://custom.relay.com");
+            assert_eq!(result, Some("wss://custom.relay.com".to_string()));
+        }
     }
 }
