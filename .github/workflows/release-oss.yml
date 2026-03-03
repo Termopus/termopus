@@ -159,21 +159,29 @@ jobs:
         working-directory: bridge
         run: cargo build --release
 
-      - name: Package
+      - name: Create app bundle
+        working-directory: bridge
+        run: |
+          cargo install cargo-bundle
+          cargo bundle --release
+          # Include hook binary in the app bundle
+          cp target/release/termopus-hook target/release/bundle/osx/Termopus.app/Contents/MacOS/
+
+      - name: Create DMG
         working-directory: bridge
         run: |
           TAG="${{ needs.release.outputs.new_tag }}"
-          mkdir -p "Termopus-${TAG}"
-          cp target/release/termopus "Termopus-${TAG}/"
-          cp target/release/termopus-hook "Termopus-${TAG}/"
-          tar -czf "Termopus-${TAG}-macos-arm64.tar.gz" "Termopus-${TAG}/"
+          hdiutil create -volname "Termopus" \
+            -srcfolder target/release/bundle/osx/Termopus.app \
+            -ov -format UDZO \
+            "Termopus-${TAG}-macos-arm64.dmg"
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ needs.release.outputs.new_tag }}"
-          gh release upload "$TAG" "bridge/Termopus-${TAG}-macos-arm64.tar.gz"
+          gh release upload "$TAG" "bridge/Termopus-${TAG}-macos-arm64.dmg"
 
   build-windows:
     name: Build Windows (x86_64)
