@@ -40,6 +40,9 @@ pub struct AppConfig {
     /// Window height (persisted)
     #[serde(default = "default_window_height")]
     pub window_height: f32,
+    /// Relay server URL (saved from first-run setup for OSS users).
+    #[serde(default)]
+    pub relay_url: Option<String>,
 }
 
 fn default_auto_reconnect() -> bool {
@@ -257,6 +260,20 @@ pub fn get_last_active_session() -> Option<String> {
     load_app_config()
         .ok()
         .and_then(|c| c.last_active_session)
+}
+
+/// Get the saved relay URL from config (for OSS first-run persistence).
+pub fn get_saved_relay_url() -> Option<String> {
+    load_app_config()
+        .ok()
+        .and_then(|c| c.relay_url)
+}
+
+/// Save a relay URL to the app config.
+pub fn set_saved_relay_url(url: &str) -> Result<()> {
+    let mut config = load_app_config().unwrap_or_default();
+    config.relay_url = Some(url.to_string());
+    save_app_config(&config)
 }
 
 /// Save the Claude Code session ID for crash recovery.

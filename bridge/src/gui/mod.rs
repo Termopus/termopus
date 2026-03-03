@@ -292,6 +292,30 @@ use crate::session::manager::{
     ActiveSession, SessionCommand, SessionHandles, SessionStatus, SharedBridgeManager,
 };
 
+/// Validate and normalize a relay URL for WebSocket connection.
+fn validate_relay_url(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("URL cannot be empty".to_string());
+    }
+    if !trimmed.starts_with("wss://") && !trimmed.starts_with("ws://") {
+        return Err("URL must start with wss:// or ws://".to_string());
+    }
+    let after_scheme = if trimmed.starts_with("wss://") {
+        &trimmed[6..]
+    } else {
+        &trimmed[5..]
+    };
+    if after_scheme.is_empty() || after_scheme == "/" {
+        return Err("URL must include a hostname".to_string());
+    }
+    let normalized = trimmed.trim_end_matches('/').to_string();
+    if normalized.contains("YOUR_RELAY") {
+        return Err("Please enter your actual relay server URL".to_string());
+    }
+    Ok(normalized)
+}
+
 /// Multi-session GUI application
 pub struct TermopusMultiApp {
     manager: SharedBridgeManager,
@@ -317,6 +341,16 @@ pub struct TermopusMultiApp {
     show_forgot_pin: bool,
     /// Recovery code input field
     recovery_input: String,
+    /// Whether the relay URL setup screen is showing (OSS first-run)
+    needs_relay_setup: bool,
+    /// Text input for relay URL setup
+    relay_setup_input: String,
+    /// Validation error for relay URL input
+    relay_setup_error: Option<String>,
+    /// Shared relay URL (updated by GUI, read by orchestrator thread)
+    relay_url_shared: Arc<std::sync::Mutex<String>>,
+    /// Whether a relay URL has been saved (for showing "Change Relay URL" button)
+    is_oss_configured: bool,
 }
 
 impl TermopusMultiApp {
@@ -327,6 +361,8 @@ impl TermopusMultiApp {
         relay_url: String,
         show_window_requested: Arc<AtomicBool>,
         tray_icon: Option<tray_icon::TrayIcon>,
+        needs_relay_setup: bool,
+        relay_url_shared: Arc<std::sync::Mutex<String>>,
     ) -> Self {
         Self {
             manager,
@@ -347,6 +383,11 @@ impl TermopusMultiApp {
             recovery_code_display: None,
             show_forgot_pin: false,
             recovery_input: String::new(),
+            needs_relay_setup,
+            relay_setup_input: String::new(),
+            relay_setup_error: None,
+            relay_url_shared,
+            is_oss_configured: crate::config::storage::get_saved_relay_url().is_some(),
         }
     }
 
@@ -439,6 +480,22 @@ impl TermopusMultiApp {
             );
             if ui.add(quit_btn).clicked() {
                 self.show_quit_dialog = true;
+            }
+
+            // "Change Relay URL" — only visible if user previously saved a relay URL
+            // (i.e., they went through OSS first-run setup; managed builds never set this)
+            if self.is_oss_configured {
+                ui.add_space(4.0);
+                let relay_btn = egui::Button::new(
+                    egui::RichText::new("Change Relay URL")
+                        .size(10.0)
+                        .color(egui::Color32::from_rgb(150, 150, 200)),
+                );
+                if ui.add(relay_btn).clicked() {
+                    self.relay_setup_input = self.relay_url.clone();
+                    self.relay_setup_error = None;
+                    self.needs_relay_setup = true;
+                }
             }
         });
     }
@@ -1280,6 +1337,107 @@ impl TermopusMultiApp {
         });
     }
 
+    /// Render the relay URL setup screen (OSS first-run).
+    fn render_relay_setup(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(40.0);
+            ui.label(egui::RichText::new("Welcome to Termopus").size(24.0).strong());
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new("Control Claude Code from your phone")
+                    .size(13.0)
+                    .weak(),
+            );
+            ui.add_space(30.0);
+
+            egui::Frame::none()
+                .fill(egui::Color32::from_rgb(40, 42, 54))
+                .inner_margin(egui::Margin::same(20.0))
+                .rounding(egui::Rounding::same(8.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("Configure Relay Server")
+                            .size(16.0)
+                            .strong(),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Enter the WebSocket URL of your self-hosted relay.\n\
+                             This is the wss:// URL printed by setup.sh.",
+                        )
+                        .size(12.0)
+                        .weak(),
+                    );
+                    ui.add_space(16.0);
+
+                    let url_response = ui.add(
+                        egui::TextEdit::singleline(&mut self.relay_setup_input)
+                            .hint_text("wss://your-relay.example.workers.dev")
+                            .desired_width(380.0)
+                            .font(egui::TextStyle::Monospace),
+                    );
+
+                    ui.add_space(8.0);
+
+                    if let Some(ref err) = self.relay_setup_error {
+                        ui.label(
+                            egui::RichText::new(err)
+                                .size(12.0)
+                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                        );
+                        ui.add_space(8.0);
+                    }
+
+                    let enter_pressed = url_response.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                    let continue_btn = egui::Button::new(
+                        egui::RichText::new("Continue")
+                            .size(14.0)
+                            .color(egui::Color32::WHITE),
+                    )
+                    .fill(egui::Color32::from_rgb(60, 120, 200))
+                    .min_size(egui::vec2(200.0, 36.0));
+
+                    let can_submit = !self.relay_setup_input.trim().is_empty();
+
+                    if ui.add_enabled(can_submit, continue_btn).clicked()
+                        || (enter_pressed && can_submit)
+                    {
+                        let url = self.relay_setup_input.trim().to_string();
+                        match validate_relay_url(&url) {
+                            Ok(normalized) => {
+                                if let Err(e) =
+                                    crate::config::storage::set_saved_relay_url(&normalized)
+                                {
+                                    self.relay_setup_error =
+                                        Some(format!("Failed to save: {}", e));
+                                } else {
+                                    *self.relay_url_shared.lock().unwrap() = normalized.clone();
+                                    self.relay_url = normalized;
+                                    self.needs_relay_setup = false;
+                                    self.relay_setup_error = None;
+                                    let _ = self.new_session_tx.send(());
+                                    self.is_oss_configured = true;
+                                }
+                            }
+                            Err(err) => {
+                                self.relay_setup_error = Some(err);
+                            }
+                        }
+                    }
+                });
+
+            ui.add_space(20.0);
+            ui.label(
+                egui::RichText::new("Run setup.sh first to deploy your relay and get the URL")
+                    .size(11.0)
+                    .weak(),
+            );
+        });
+    }
+
     fn render_error_for(&self, name: &str, msg: &str, ui: &mut egui::Ui) {
         ui.vertical_centered(|ui| {
             ui.add_space(80.0);
@@ -1387,6 +1545,15 @@ impl eframe::App for TermopusMultiApp {
 
         ctx.set_visuals(egui::Visuals::dark());
 
+        // If relay URL needs setup, show full-screen setup instead of normal UI
+        if self.needs_relay_setup {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                self.render_relay_setup(ui);
+            });
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            return;
+        }
+
         // Left panel: session list
         egui::SidePanel::left("session_list")
             .min_width(160.0)
@@ -1417,6 +1584,8 @@ pub fn run_gui_multi(
     handles: SessionHandles,
     new_session_tx: std::sync::mpsc::Sender<()>,
     relay_url: String,
+    needs_relay_setup: bool,
+    relay_url_shared: Arc<std::sync::Mutex<String>>,
 ) -> Result<(), eframe::Error> {
     let show_window_requested = Arc::new(AtomicBool::new(false));
 
@@ -1462,6 +1631,8 @@ pub fn run_gui_multi(
                 relay_url,
                 show_window_requested,
                 tray_icon,
+                needs_relay_setup,
+                relay_url_shared,
             )))
         }),
     )
@@ -1561,5 +1732,62 @@ fn setup_tray_icon_multi(
             tracing::warn!("Failed to create tray icon: {}", e);
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_relay_url;
+
+    #[test]
+    fn test_valid_wss_url() {
+        assert_eq!(
+            validate_relay_url("wss://my-relay.workers.dev"),
+            Ok("wss://my-relay.workers.dev".to_string())
+        );
+    }
+
+    #[test]
+    fn test_valid_ws_localhost() {
+        assert_eq!(
+            validate_relay_url("ws://localhost:8788"),
+            Ok("ws://localhost:8788".to_string())
+        );
+    }
+
+    #[test]
+    fn test_trailing_slash_stripped() {
+        assert_eq!(
+            validate_relay_url("wss://relay.example.com/"),
+            Ok("wss://relay.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_whitespace_trimmed() {
+        assert_eq!(
+            validate_relay_url("  wss://relay.example.com  "),
+            Ok("wss://relay.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_reject_http() {
+        assert!(validate_relay_url("https://relay.example.com").is_err());
+    }
+
+    #[test]
+    fn test_reject_empty() {
+        assert!(validate_relay_url("").is_err());
+    }
+
+    #[test]
+    fn test_reject_scheme_only() {
+        assert!(validate_relay_url("wss://").is_err());
+    }
+
+    #[test]
+    fn test_reject_placeholder() {
+        assert!(validate_relay_url("wss://YOUR_RELAY_URL").is_err());
     }
 }
