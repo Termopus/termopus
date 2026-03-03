@@ -21,21 +21,31 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 # ── Prerequisites ──────────────────────────────────────────────────
 check_prereqs() {
+    # Required for setup.sh to run
     local missing=()
-    command -v claude   >/dev/null 2>&1 || missing+=("claude (Claude Code CLI — https://docs.anthropic.com/en/docs/claude-code)")
     command -v wrangler >/dev/null 2>&1 || missing+=("wrangler (npm install -g wrangler)")
-    command -v npm      >/dev/null 2>&1 || missing+=("npm")
-    command -v flutter  >/dev/null 2>&1 || missing+=("flutter (https://docs.flutter.dev/get-started/install)")
-    command -v cargo    >/dev/null 2>&1 || missing+=("cargo (https://rustup.rs/) — not needed if using pre-built bridge binary")
+    command -v npm      >/dev/null 2>&1 || missing+=("npm (https://nodejs.org/)")
     command -v openssl  >/dev/null 2>&1 || missing+=("openssl")
 
     if [ ${#missing[@]} -gt 0 ]; then
-        error "Missing prerequisites:"
+        error "Missing prerequisites (required for setup):"
         for m in "${missing[@]}"; do
             echo "  - $m"
         done
         exit 1
     fi
+
+    # Optional — needed later but not for setup itself
+    if ! command -v claude >/dev/null 2>&1; then
+        warn "Claude Code not found — install before running the bridge: https://docs.anthropic.com/en/docs/claude-code"
+    fi
+    if ! command -v flutter >/dev/null 2>&1; then
+        warn "Flutter not found — needed to build the mobile app: https://docs.flutter.dev/get-started/install"
+    fi
+    if ! command -v cargo >/dev/null 2>&1; then
+        info "Rust/Cargo not found — not needed if using a pre-built bridge binary from GitHub Releases"
+    fi
+
     ok "All prerequisites found"
 }
 
@@ -230,47 +240,205 @@ main() {
         ok "constants.dart updated with provisioning URL"
     fi
 
-    # ── Summary ──
+    # ── Backend Summary ──
+    local ws_url="${relay_url/https:/wss:}"
     echo ""
     echo -e "${GREEN}╔═══════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║          Setup Complete!              ║${NC}"
+    echo -e "${GREEN}║       Backend Deployed!               ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════╝${NC}"
     echo ""
     echo "Relay Worker:      $relay_url"
     echo "Provisioning API:  $prov_url"
     echo ""
-    local ws_url="${relay_url/https:/wss:}"
-
     echo -e "${CYAN}Your relay WebSocket URL (save this!):${NC}"
     echo ""
     echo "  $ws_url"
-    echo ""
-    echo -e "${CYAN}Next steps:${NC}"
-    echo ""
-    echo "  1. Build the Flutter app:"
-    echo "     cd app && flutter pub get && flutter run"
-    echo ""
-    echo "  2. Run the bridge (pick one):"
-    echo ""
-    echo "     Option A — Pre-built binary (no Rust needed):"
-    echo "       Download from: https://github.com/Termopus/termopus/releases"
-    echo "       macOS:   Open the DMG, drag to Applications, and launch."
-    echo "       Windows: Run the MSI installer and launch from Start Menu."
-    echo "       Linux:   tar -xzf Termopus-*.tar.gz && ./Termopus-*/termopus"
-    echo ""
-    echo "       On first launch, you'll be prompted to enter the relay URL above."
-    echo "       It's saved automatically — you only enter it once."
-    echo ""
-    echo "     Option B — Build from source:"
-    echo "       cd bridge && cargo build --release"
-    echo "       ./target/release/termopus"
-    echo ""
-    echo "  3. Scan the QR code from the bridge with your phone"
     echo ""
     echo "CA files saved to: $ca_dir/"
     echo "  - ca-key.pem   (KEEP PRIVATE — do not commit)"
     echo "  - ca-cert.pem  (public, safe to share)"
     echo ""
+
+    # ── Bridge Setup ──
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  Bridge Setup${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo "  The bridge runs on your computer alongside Claude Code."
+    echo "  How would you like to install it?"
+    echo ""
+    echo "  1) Download pre-built binary (recommended, no Rust needed)"
+    echo "  2) Build from source (requires Rust/Cargo)"
+    echo "  3) Skip — I'll set it up later"
+    echo ""
+    read -r -p "  Choose [1/2/3]: " bridge_choice
+    echo ""
+
+    case "$bridge_choice" in
+        1)
+            install_prebuilt_bridge "$ws_url"
+            ;;
+        2)
+            build_bridge_from_source "$ws_url"
+            ;;
+        *)
+            echo -e "${CYAN}Next steps:${NC}"
+            echo ""
+            echo "  1. Build the Flutter app:"
+            echo "     cd app && flutter pub get && flutter run"
+            echo ""
+            echo "  2. Install the bridge:"
+            echo "     Download from: https://github.com/Termopus/termopus/releases"
+            echo "     Or build: cd bridge && cargo build --release"
+            echo ""
+            echo "     On first launch, you'll be prompted to enter the relay URL:"
+            echo "     $ws_url"
+            echo ""
+            echo "  3. Scan the QR code from the bridge with your phone"
+            echo ""
+            ;;
+    esac
+}
+
+# ── Download pre-built bridge ─────────────────────────────────────
+install_prebuilt_bridge() {
+    local ws_url="$1"
+    local os_name
+    os_name="$(uname -s)"
+
+    info "Detecting platform..."
+
+    # Determine which asset to download
+    local asset_pattern
+    case "$os_name" in
+        Darwin)
+            asset_pattern="macos-arm64.dmg"
+            ;;
+        Linux)
+            asset_pattern="linux-x86_64.tar.gz"
+            ;;
+        *)
+            warn "Unsupported platform for auto-download: $os_name"
+            echo "  Download manually from: https://github.com/Termopus/termopus/releases"
+            return
+            ;;
+    esac
+
+    ok "Platform: $os_name"
+
+    # Check if gh CLI is available
+    if ! command -v gh >/dev/null 2>&1; then
+        warn "GitHub CLI (gh) not found — needed for auto-download"
+        echo ""
+        echo "  Install it: https://cli.github.com/"
+        echo "  Or download manually: https://github.com/Termopus/termopus/releases"
+        return
+    fi
+
+    info "Downloading latest bridge release..."
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+
+    if ! gh release download --repo Termopus/termopus --pattern "*${asset_pattern}" --dir "$tmp_dir" 2>/dev/null; then
+        warn "Download failed — you may need to run: gh auth login"
+        echo "  Or download manually: https://github.com/Termopus/termopus/releases"
+        rm -rf "$tmp_dir"
+        return
+    fi
+
+    local downloaded_file
+    downloaded_file="$(ls "$tmp_dir"/*"$asset_pattern" 2>/dev/null | head -1)"
+
+    if [ -z "$downloaded_file" ]; then
+        warn "No matching release found"
+        rm -rf "$tmp_dir"
+        return
+    fi
+
+    case "$os_name" in
+        Darwin)
+            ok "Downloaded: $(basename "$downloaded_file")"
+            echo ""
+            info "Opening DMG — drag Termopus to Applications..."
+            open "$downloaded_file"
+            echo ""
+            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${GREEN}  Almost done!${NC}"
+            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+            echo "  1. Drag Termopus to your Applications folder"
+            echo "  2. Launch Termopus from Applications"
+            echo "  3. When prompted, enter your relay URL:"
+            echo "     $ws_url"
+            echo "  4. Build the Flutter app on your phone:"
+            echo "     cd app && flutter pub get && flutter run"
+            echo "  5. Scan the QR code from the bridge with your phone"
+            echo ""
+            ;;
+        Linux)
+            ok "Downloaded: $(basename "$downloaded_file")"
+            local install_dir="$HOME/.local/bin"
+            mkdir -p "$install_dir"
+            tar -xzf "$downloaded_file" -C "$tmp_dir"
+            local extracted_dir
+            extracted_dir="$(ls -d "$tmp_dir"/Termopus-* 2>/dev/null | head -1)"
+            if [ -n "$extracted_dir" ]; then
+                cp "$extracted_dir/termopus" "$install_dir/"
+                [ -f "$extracted_dir/termopus-hook" ] && cp "$extracted_dir/termopus-hook" "$install_dir/"
+                chmod +x "$install_dir/termopus" "$install_dir/termopus-hook" 2>/dev/null
+                ok "Installed to $install_dir/termopus"
+            fi
+            rm -rf "$tmp_dir"
+            echo ""
+            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${GREEN}  Almost done!${NC}"
+            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo ""
+            echo "  1. Run the bridge:"
+            echo "     $install_dir/termopus"
+            echo "  2. When prompted, enter your relay URL:"
+            echo "     $ws_url"
+            echo "  3. Build the Flutter app on your phone:"
+            echo "     cd app && flutter pub get && flutter run"
+            echo "  4. Scan the QR code from the bridge with your phone"
+            echo ""
+            ;;
+    esac
+}
+
+# ── Build bridge from source ──────────────────────────────────────
+build_bridge_from_source() {
+    local ws_url="$1"
+
+    if ! command -v cargo >/dev/null 2>&1; then
+        error "Rust/Cargo is required to build from source"
+        echo "  Install from: https://rustup.rs/"
+        echo ""
+        echo "  After installing Rust, run:"
+        echo "    cd bridge && cargo build --release"
+        echo "    ./target/release/termopus"
+        return
+    fi
+
+    info "Building bridge from source (this may take a few minutes)..."
+    if (cd "$ROOT_DIR/bridge" && cargo build --release 2>&1); then
+        ok "Bridge built successfully"
+        echo ""
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${GREEN}  Almost done!${NC}"
+        echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo "  1. Run the bridge:"
+        echo "     cd bridge && ./target/release/termopus"
+        echo "  2. When prompted, enter your relay URL:"
+        echo "     $ws_url"
+        echo "  3. Build the Flutter app on your phone:"
+        echo "     cd app && flutter pub get && flutter run"
+        echo "  4. Scan the QR code from the bridge with your phone"
+        echo ""
+    else
+        error "Build failed — check the output above for errors"
+    fi
 }
 
 main "$@"
