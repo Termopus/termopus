@@ -76,18 +76,30 @@ function New-KvNamespace {
 
     # Check if namespace already exists
     try {
-        $json = wrangler kv namespace list 2>$null
-        $namespaces = $json | ConvertFrom-Json
-        $existing = $namespaces | Where-Object { $_.title -eq $Name } | Select-Object -First 1
-        if ($existing) {
-            Write-Ok "KV namespace '$Name' already exists: $($existing.id)"
-            return $existing.id
+        $json = wrangler kv namespace list 2>&1 | Out-String
+        # Extract JSON array from output (wrangler may prepend non-JSON text)
+        if ($json -match '\[[\s\S]*\]') {
+            $namespaces = $Matches[0] | ConvertFrom-Json
+            $existing = $namespaces | Where-Object { $_.title -eq $Name } | Select-Object -First 1
+            if ($existing) {
+                Write-Ok "KV namespace '$Name' already exists: $($existing.id)"
+                return $existing.id
+            }
         }
     } catch {
         # If list fails or parsing fails, proceed to create
     }
 
-    $output = wrangler kv namespace create $Name 2>&1 | Out-String
+    try {
+        $output = wrangler kv namespace create $Name 2>&1 | Out-String
+    } catch {
+        $output = $_.Exception.Message
+    }
+    if ($output -match '"([a-f0-9]{32})"') {
+        $nsId = $Matches[1]
+        Write-Ok "Created KV namespace '$Name': $nsId"
+        return $nsId
+    }
     if ($output -match 'id = "([^"]+)"') {
         $nsId = $Matches[1]
         Write-Ok "Created KV namespace '$Name': $nsId"
@@ -175,20 +187,20 @@ function Main {
     # ── Install dependencies ──
     Write-Info "Installing relay_worker dependencies..."
     Push-Location (Join-Path $RootDir "relay_worker")
-    npm install --silent 2>$null
+    try { npm install --silent 2>&1 | Out-Null } catch {}
     Pop-Location
     Write-Ok "relay_worker dependencies installed"
 
     Write-Info "Installing provisioning_api dependencies..."
     Push-Location (Join-Path $RootDir "provisioning_api")
-    npm install --silent 2>$null
+    try { npm install --silent 2>&1 | Out-Null } catch {}
     Pop-Location
     Write-Ok "provisioning_api dependencies installed"
 
     # ── Deploy workers ──
     Write-Info "Deploying relay worker (dev)..."
     Push-Location (Join-Path $RootDir "relay_worker")
-    $relayOutput = npx wrangler deploy --env dev 2>&1 | Out-String
+    try { $relayOutput = npx wrangler deploy --env dev 2>&1 | Out-String } catch { $relayOutput = "" }
     Pop-Location
     $relayUrl = ""
     if ($relayOutput -match '(https://[^\s]*\.workers\.dev)') {
@@ -198,7 +210,7 @@ function Main {
 
     Write-Info "Deploying provisioning API (dev)..."
     Push-Location (Join-Path $RootDir "provisioning_api")
-    $provOutput = npx wrangler deploy --env dev 2>&1 | Out-String
+    try { $provOutput = npx wrangler deploy --env dev 2>&1 | Out-String } catch { $provOutput = "" }
     Pop-Location
     $provUrl = ""
     if ($provOutput -match '(https://[^\s]*\.workers\.dev)') {
@@ -226,24 +238,24 @@ function Main {
 
     # ── Set CA Secrets on Workers ──
     Write-Info "Setting CA_PRIVATE_KEY on provisioning API..."
-    Get-Content $caKey -Raw | wrangler secret put CA_PRIVATE_KEY --env dev --config $provToml 2>$null
+    try { Get-Content $caKey -Raw | wrangler secret put CA_PRIVATE_KEY --env dev --config $provToml 2>&1 | Out-Null } catch {}
     Write-Ok "CA_PRIVATE_KEY set"
 
     Write-Info "Setting CA_CERTIFICATE on provisioning API..."
-    Get-Content $caCert -Raw | wrangler secret put CA_CERTIFICATE --env dev --config $provToml 2>$null
+    try { Get-Content $caCert -Raw | wrangler secret put CA_CERTIFICATE --env dev --config $provToml 2>&1 | Out-Null } catch {}
     Write-Ok "CA_CERTIFICATE set on provisioning API"
 
     Write-Info "Setting CA_CERTIFICATE on relay worker..."
-    Get-Content $caCert -Raw | wrangler secret put CA_CERTIFICATE --env dev --config $relayToml 2>$null
+    try { Get-Content $caCert -Raw | wrangler secret put CA_CERTIFICATE --env dev --config $relayToml 2>&1 | Out-Null } catch {}
     Write-Ok "CA_CERTIFICATE set on relay worker"
 
     # ── Redeploy with Secrets ──
     Write-Info "Redeploying workers with CA secrets..."
     Push-Location (Join-Path $RootDir "relay_worker")
-    npx wrangler deploy --env dev 2>$null | Out-Null
+    try { npx wrangler deploy --env dev 2>&1 | Out-Null } catch {}
     Pop-Location
     Push-Location (Join-Path $RootDir "provisioning_api")
-    npx wrangler deploy --env dev 2>$null | Out-Null
+    try { npx wrangler deploy --env dev 2>&1 | Out-Null } catch {}
     Pop-Location
     Write-Ok "Workers redeployed with mTLS certificates"
 
@@ -334,7 +346,7 @@ function Install-PrebuiltBridge {
     New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
     try {
-        gh release download --repo Termopus/termopus --pattern "*windows-x86_64.msi" --dir $tmpDir 2>$null
+        gh release download --repo Termopus/termopus --pattern "*windows-x86_64.msi" --dir $tmpDir 2>&1 | Out-Null
     } catch {
         Write-Warn "Download failed - you may need to run: gh auth login"
         Write-Host "  Or download manually: https://github.com/Termopus/termopus/releases"
