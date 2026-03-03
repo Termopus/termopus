@@ -1,3 +1,7 @@
+// Hide the console window on Windows — Termopus is a GUI app (system tray).
+// Without this, a black cmd window appears behind the GUI on every launch.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use anyhow::Result;
 use clap::Parser;
 use std::sync::Arc;
@@ -9,6 +13,7 @@ mod file_transfer;
 mod gui;
 mod hooks;
 mod parser;
+mod platform;
 mod qr;
 mod relay;
 mod http_tunnel;
@@ -38,7 +43,7 @@ struct Cli {
 
     /// Relay server URL.
     /// Deploy relay_worker/ and use the deployed URL.
-    /// Example: wss://termopus-relay-dev.yourname.workers.dev
+    /// Example: wss://termopus-relay.yourname.workers.dev
     #[arg(long, default_value = "wss://YOUR_RELAY_URL")]
     relay: String,
 }
@@ -47,21 +52,12 @@ struct Cli {
 /// the app is launched from Finder (double-click) where the user's shell
 /// profile is NOT sourced and PATH is minimal.
 fn enrich_path() {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/unknown".to_string());
-    let extra_dirs = [
-        format!("{}/.local/bin", home),
-        format!("{}/.cargo/bin", home),
-        "/opt/homebrew/bin".to_string(),
-        "/opt/homebrew/sbin".to_string(),
-        "/usr/local/bin".to_string(),
-        format!("{}/bin", home),
-        // npm global bin (common locations)
-        format!("{}/.npm-global/bin", home),
-        "/usr/local/opt/node/bin".to_string(),
-    ];
+    let home = crate::platform::home_dir().unwrap_or_default();
+    let extra_dirs = crate::platform::extra_path_dirs(&home);
+    let sep = crate::platform::path_separator();
 
     let current_path = std::env::var("PATH").unwrap_or_default();
-    let mut paths: Vec<String> = current_path.split(':').map(|s| s.to_string()).collect();
+    let mut paths: Vec<String> = current_path.split(sep).map(|s| s.to_string()).collect();
 
     for dir in &extra_dirs {
         if !paths.contains(dir) && std::path::Path::new(dir).exists() {
@@ -69,7 +65,7 @@ fn enrich_path() {
         }
     }
 
-    std::env::set_var("PATH", paths.join(":"));
+    std::env::set_var("PATH", paths.join(sep));
 }
 
 fn main() -> Result<()> {

@@ -9,8 +9,9 @@ use std::path::PathBuf;
 
 /// Base directory for hook file communication.
 /// Structure:
-///   /tmp/termopus-{session_id}/events/    <- hooks write, bridge reads
-///   /tmp/termopus-{session_id}/responses/ <- bridge writes, hooks read
+///   {ipc_base}/termopus-{session_id}/events/    <- hooks write, bridge reads
+///   {ipc_base}/termopus-{session_id}/responses/ <- bridge writes, hooks read
+/// ipc_base: /tmp on Unix, %TEMP%\Termopus on Windows (see platform module)
 pub struct HookDirectory {
     pub base: PathBuf,
     pub events_dir: PathBuf,
@@ -18,12 +19,11 @@ pub struct HookDirectory {
 }
 
 impl HookDirectory {
-    /// Well-known base directory for IPC.
-    /// Uses `/tmp/` instead of `env::temp_dir()` because on macOS `$TMPDIR`
-    /// varies per process (`/var/folders/.../T/`) which causes path mismatches
-    /// between the bridge and hook binary when Claude Code is spawned via tmux.
+    /// Well-known base directory for IPC (platform-specific).
+    /// Unix: /tmp (not env::temp_dir(), because macOS $TMPDIR varies per process).
+    /// Windows: %TEMP%\Termopus (temp_dir() is consistent on Windows).
     fn ipc_base(session_prefix: &str) -> PathBuf {
-        PathBuf::from("/tmp").join(format!("termopus-{}", session_prefix))
+        crate::platform::ipc_base().join(format!("termopus-{}", session_prefix))
     }
 
     pub fn new(session_id: &str) -> Result<Self> {
@@ -32,20 +32,9 @@ impl HookDirectory {
         let events_dir = base.join("events");
         let responses_dir = base.join("responses");
 
-        // Create directories with restricted permissions (chmod 700)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            let mut builder = fs::DirBuilder::new();
-            builder.recursive(true).mode(0o700);
-            builder.create(&events_dir)?;
-            builder.create(&responses_dir)?;
-        }
-        #[cfg(not(unix))]
-        {
-            fs::create_dir_all(&events_dir)?;
-            fs::create_dir_all(&responses_dir)?;
-        }
+        // Create directories with restricted permissions
+        crate::platform::secure_create_dir(&events_dir)?;
+        crate::platform::secure_create_dir(&responses_dir)?;
 
         Ok(Self {
             base,

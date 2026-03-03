@@ -150,6 +150,8 @@ impl RelayClient {
             .uri(&url)
             .header("Authorization", format!("Bearer {}", token))
             .header("Host", url.split('/').nth(2).unwrap_or("YOUR_RELAY_DOMAIN"))
+            .header("User-Agent", "Termopus/1.0")
+            .header("Accept", "*/*")
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")
@@ -188,8 +190,11 @@ impl RelayClient {
                 })
             }
             Err(e) => {
-                // Check for HTTP error status codes (relay rejection)
                 let err_str = e.to_string();
+                tracing::error!("Relay connection error: {}", err_str);
+                tracing::error!("Relay connection error (debug): {:?}", e);
+
+                // Check for HTTP error status codes (relay rejection)
                 if err_str.contains("402") {
                     anyhow::bail!(
                         "Subscription required — please open the Termopus app and subscribe"
@@ -224,6 +229,8 @@ impl RelayClient {
             .uri(&url)
             .header("Authorization", format!("Bearer {}", token))
             .header("Host", url.split('/').nth(2).unwrap_or("YOUR_RELAY_DOMAIN"))
+            .header("User-Agent", "Termopus/1.0")
+            .header("Accept", "*/*")
             .header("Connection", "Upgrade")
             .header("Upgrade", "websocket")
             .header("Sec-WebSocket-Version", "13")

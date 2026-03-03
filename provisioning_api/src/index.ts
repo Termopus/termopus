@@ -16,6 +16,8 @@ export interface Env {
   REQUIRE_KEY_ATTESTATION?: string;
   /** When "true", allow sideloaded/debug APKs to skip cert digest check */
   ALLOW_SIDELOADED?: string;
+  /** Device provisioning cooldown in seconds (default: 3600 = 1 hour) */
+  DEVICE_COOLDOWN_SECONDS?: string;
 
   // Secrets (set via `wrangler secret put`)
   CA_PRIVATE_KEY: string;

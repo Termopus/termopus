@@ -168,6 +168,122 @@ fn load_window_icon() -> Option<egui::IconData> {
     None
 }
 
+/// Reorder text using the Unicode Bidirectional Algorithm so that RTL
+/// scripts (Hebrew, Arabic) display correctly in egui's LTR renderer.
+fn bidi_reorder(text: &str) -> String {
+    use unicode_bidi::BidiInfo;
+    // Process each line independently so newlines are preserved
+    text.lines()
+        .map(|line| {
+            if line.is_empty() {
+                return String::new();
+            }
+            let bidi_info = BidiInfo::new(line, None);
+            let mut result = String::new();
+            for para in &bidi_info.paragraphs {
+                let reordered = bidi_info.reorder_line(para, para.range.clone());
+                result.push_str(&reordered);
+            }
+            result
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Configure egui fonts to support Hebrew (and other non-Latin scripts).
+///
+/// Loads a system font with broad Unicode coverage as a fallback so that
+/// Hebrew, Arabic, CJK, etc. render correctly instead of showing tofu boxes.
+fn configure_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Platform-specific system fonts with Hebrew/Unicode coverage
+    let candidates: Vec<&str> = if cfg!(target_os = "windows") {
+        vec![
+            "C:\\Windows\\Fonts\\segoeui.ttf",   // Segoe UI — Windows system font, has Hebrew
+            "C:\\Windows\\Fonts\\arial.ttf",      // Arial fallback
+        ]
+    } else {
+        vec![
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/Library/Fonts/Arial Unicode.ttf",
+        ]
+    };
+
+    for path in &candidates {
+        if let Ok(font_data) = std::fs::read(path) {
+            tracing::info!("Loaded system font for Unicode support: {}", path);
+            fonts.font_data.insert(
+                "system_unicode".to_owned(),
+                egui::FontData::from_owned(font_data),
+            );
+
+            // Add as fallback (last in the list) for both font families
+            fonts.families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .push("system_unicode".to_owned());
+            fonts.families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .push("system_unicode".to_owned());
+
+            ctx.set_fonts(fonts);
+            return;
+        }
+    }
+
+    tracing::warn!("No system font with Hebrew/Unicode support found");
+}
+
+/// Set the macOS dock icon using NSApplication API.
+/// This replaces the default egui "e" icon with the Termopus icon.
+#[cfg(target_os = "macos")]
+fn set_macos_dock_icon() {
+    use cocoa::appkit::{NSApp, NSApplication, NSImage};
+    use cocoa::base::nil;
+    use cocoa::foundation::NSData;
+
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let exe_dir = match exe.parent() {
+        Some(d) => d.to_path_buf(),
+        None => return,
+    };
+
+    let mut candidates = vec![];
+    if let Some(contents) = exe_dir.parent() {
+        candidates.push(contents.join("Resources/icon_128x128.png"));
+    }
+    if let Some(root) = exe_dir.parent().and_then(|p| p.parent()) {
+        candidates.push(root.join("assets/icon_128x128.png"));
+    }
+    if let Some(root) = exe_dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        candidates.push(root.join("assets/icon_128x128.png"));
+    }
+
+    for path in &candidates {
+        if let Ok(data) = std::fs::read(path) {
+            unsafe {
+                let ns_data = NSData::dataWithBytes_length_(
+                    nil,
+                    data.as_ptr() as *const std::ffi::c_void,
+                    data.len() as u64,
+                );
+                let ns_image = NSImage::initWithData_(NSImage::alloc(nil), ns_data);
+                if !ns_image.is_null() {
+                    NSApp().setApplicationIconImage_(ns_image);
+                    tracing::info!("Set macOS dock icon from: {:?}", path);
+                }
+            }
+            return;
+        }
+    }
+}
+
 // =====================================================================
 // Multi-session GUI
 // =====================================================================
@@ -261,6 +377,7 @@ impl TermopusMultiApp {
                 SessionStatus::Error(_) => "🔴",
                 SessionStatus::Disconnected => "⚪",
                 SessionStatus::Connecting => "🔵",
+                SessionStatus::SetupRequired => "🟠",
             };
 
             let label = format!("{} {}", status_icon, session.name);
@@ -335,6 +452,9 @@ impl TermopusMultiApp {
             Some(session) => match session.status {
                 SessionStatus::Initializing | SessionStatus::WaitingForPairing => {
                     self.render_pairing_for(&session, ui, ctx);
+                }
+                SessionStatus::SetupRequired => {
+                    self.render_setup_required(&session, ui);
                 }
                 SessionStatus::Connected | SessionStatus::Connecting => {
                     self.render_terminal_for(&session, ui);
@@ -971,10 +1091,7 @@ impl TermopusMultiApp {
                 if ui.add(folder_btn).clicked() {
                     if let Some(dir) = crate::file_transfer::protocol::session_dir(&session.id) {
                         let _ = std::fs::create_dir_all(&dir);
-                        #[cfg(target_os = "macos")]
-                        let _ = std::process::Command::new("open").arg(&dir).spawn();
-                        #[cfg(target_os = "linux")]
-                        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+                        crate::platform::open_folder(&dir);
                     }
                 }
             });
@@ -1008,7 +1125,8 @@ impl TermopusMultiApp {
                         );
                     });
                 } else {
-                    let text = egui::RichText::new(&session.terminal_output)
+                    let display_text = bidi_reorder(&session.terminal_output);
+                    let text = egui::RichText::new(&display_text)
                         .size(11.0)
                         .monospace()
                         .color(egui::Color32::from_rgb(200, 200, 200));
@@ -1104,6 +1222,62 @@ impl TermopusMultiApp {
                 );
             });
         }
+    }
+
+    fn render_setup_required(&self, session: &ActiveSession, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(24.0);
+            ui.label(egui::RichText::new("🐙 Setup Required").size(22.0).strong());
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("Please complete the steps below to continue.").size(13.0).weak());
+            ui.add_space(20.0);
+
+            for (title, description) in &session.setup_issues {
+                egui::Frame::none()
+                    .fill(egui::Color32::from_rgb(50, 35, 35))
+                    .inner_margin(egui::Margin::same(10.0))
+                    .rounding(egui::Rounding::same(6.0))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(title).size(13.0).strong()
+                            .color(egui::Color32::from_rgb(255, 160, 80)));
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(description).size(11.0).monospace()
+                            .color(egui::Color32::from_rgb(200, 200, 200)));
+                    });
+                ui.add_space(10.0);
+            }
+
+            ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(12.0);
+
+            let dl_btn = egui::Button::new(egui::RichText::new("🌐  Download Claude Code").size(13.0).color(egui::Color32::WHITE))
+                .fill(egui::Color32::from_rgb(60, 100, 180))
+                .min_size(egui::vec2(240.0, 36.0));
+            if ui.add(dl_btn).clicked() {
+                crate::platform::open_url("https://claude.ai/download");
+            }
+
+            ui.add_space(8.0);
+
+            let install_btn = egui::Button::new(egui::RichText::new("⚡  Install via Terminal").size(13.0).color(egui::Color32::WHITE))
+                .fill(egui::Color32::from_rgb(60, 140, 60))
+                .min_size(egui::vec2(240.0, 36.0));
+            if ui.add(install_btn).clicked() {
+                #[cfg(windows)]
+                let install_cmd = "powershell -Command \"irm https://claude.ai/install.ps1 | iex\"";
+                #[cfg(not(windows))]
+                let install_cmd = "curl -fsSL https://claude.ai/install.sh | bash";
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    let _ = rt.block_on(crate::platform::open_terminal(install_cmd));
+                });
+            }
+
+            ui.add_space(16.0);
+            ui.label(egui::RichText::new("🔄 Checking automatically every few seconds…").size(11.0).weak()
+                .color(egui::Color32::from_rgb(100, 200, 100)));
+        });
     }
 
     fn render_error_for(&self, name: &str, msg: &str, ui: &mut egui::Ui) {
@@ -1267,6 +1441,9 @@ pub fn run_gui_multi(
         viewport = viewport.with_icon(Arc::new(icon_data));
     }
 
+    #[cfg(target_os = "macos")]
+    set_macos_dock_icon();
+
     let options = eframe::NativeOptions {
         viewport,
         centered: true,
@@ -1276,7 +1453,8 @@ pub fn run_gui_multi(
     eframe::run_native(
         "Termopus",
         options,
-        Box::new(move |_cc| {
+        Box::new(move |cc| {
+            configure_fonts(&cc.egui_ctx);
             Ok(Box::new(TermopusMultiApp::new(
                 manager,
                 handles,

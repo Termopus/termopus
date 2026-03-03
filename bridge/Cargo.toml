@@ -19,7 +19,7 @@ path = "src/bin/termopus-hook.rs"
 tokio = { version = "1.35", features = ["full"] }
 
 # WebSocket
-tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-webpki-roots"] }
 futures-util = "0.3"
 
 # Crypto
@@ -57,8 +57,7 @@ keyring = "2"
 # Error handling
 anyhow = "1.0"
 
-# POSIX signals (SIGINT for interrupt)
-libc = "0.2"
+# Error types
 thiserror = "1.0"
 
 # Encoding
@@ -86,6 +85,9 @@ regex = "1.10"
 # Filesystem watching (kqueue on macOS, inotify on Linux)
 notify = "6.1"
 
+# Bidirectional text (Hebrew, Arabic RTL support)
+unicode-bidi = "0.3"
+
 # GUI
 eframe = "0.29"
 egui = "0.29"
@@ -104,15 +106,45 @@ opt-level = 2
 tokio-test = "0.4"
 tempfile = "3.10"
 
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
+# Unix-only: POSIX signals, file locking, memory locking
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# macOS-only: Native APIs for dock icon
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
+
+# Windows-only: Win32 APIs for process control, file locking, memory locking
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }
+
 # macOS app bundle configuration
 [package.metadata.bundle]
 name = "Termopus"
 identifier = "com.termopus.bridge"
-icon = ["../dist/Termopus.app/Contents/Resources/Termopus.icns"]
-resources = ["resources/tray_icon.png", "resources/tray_icon@2x.png"]
+icon = ["resources/Termopus.icns"]
+resources = ["resources/tray_icon.png", "resources/tray_icon@2x.png", "resources/icon_128x128.png"]
 version = "1.0.0"
 copyright = "Copyright © 2026 Termopus"
 category = "Developer Tool"
 short_description = "Control Claude Code from your phone"
 long_description = "Termopus lets you control Claude Code remotely from your phone with secure end-to-end encryption."
 osx_minimum_system_version = "11.0"
+
+# Windows MSI installer configuration (cargo-wix)
+[package.metadata.wix]
+extensions = ["WixUIExtension", "WixUtilExtension"]
+locale = "wix/locale.wxl"
+license = "wix/license.rtf"

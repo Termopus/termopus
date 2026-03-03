@@ -175,6 +175,7 @@ final class SecureWebSocket: NSObject, URLSessionWebSocketDelegate, URLSessionTa
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
+        request.setValue("Termopus/1.0", forHTTPHeaderField: "User-Agent")
 
         webSocketTask = urlSession?.webSocketTask(with: request)
         webSocketTask?.resume()
@@ -326,6 +327,7 @@ final class SecureWebSocket: NSObject, URLSessionWebSocketDelegate, URLSessionTa
 
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
+        request.setValue("Termopus/1.0", forHTTPHeaderField: "User-Agent")
 
         webSocketTask = urlSession?.webSocketTask(with: request)
         webSocketTask?.resume()

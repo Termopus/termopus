@@ -150,6 +150,8 @@ pub enum SessionStatus {
     Connected,
     /// Session is disconnected but can be reconnected
     Disconnected,
+    /// Claude Code is not installed. GUI shows setup screen, task polls every 500ms.
+    SetupRequired,
     /// Session encountered an error
     Error(String),
 }

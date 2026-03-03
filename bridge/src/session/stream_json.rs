@@ -164,7 +164,7 @@ impl StreamJsonSession {
         env_vars: Vec<(String, String)>,
         system_prompt_file: Option<&str>,
     ) -> Result<Self> {
-        let mut cmd = Command::new("claude");
+        let mut cmd = Command::new(crate::setup::resolved_claude_binary());
         cmd.args([
             "-p",
             "--output-format", "stream-json",
@@ -177,7 +177,7 @@ impl StreamJsonSession {
         // Expand sandbox to user's home directory so Claude can access
         // Desktop, Documents, etc. without --dangerously-skip-permissions.
         // Hooks still control tool permissions (PreToolUse gate).
-        if let Ok(home) = std::env::var("HOME") {
+        if let Some(home) = crate::platform::home_dir() {
             cmd.args(["--add-dir", &home]);
         }
 
@@ -194,6 +194,13 @@ impl StreamJsonSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit()) // inherit to avoid deadlock if buffer fills
             .env_remove("CLAUDECODE"); // allow spawning inside a Claude Code session
+
+        // Suppress console window flash on Windows
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
 
         for (k, v) in &env_vars {
             cmd.env(k, v);
@@ -240,6 +247,12 @@ impl StreamJsonSession {
         self.event_rx.recv().await
     }
 
+    /// Check if the child process is still alive.
+    /// Returns `Some(true)` if running, `Some(false)` if exited, `None` on error.
+    pub fn is_running(&mut self) -> Option<bool> {
+        self.child.try_wait().ok().map(|s| s.is_none())
+    }
+
     /// Kill the child process.
     pub async fn kill(&mut self) -> Result<()> {
         self.child.kill().await.context("Failed to kill claude process")
@@ -250,12 +263,7 @@ impl StreamJsonSession {
     pub fn interrupt(&self) -> Result<()> {
         let pid = self.child.id()
             .context("Cannot interrupt: child process already exited")?;
-        // SAFETY: Sending SIGINT to a known child process.
-        let ret = unsafe { libc::kill(pid as i32, libc::SIGINT) };
-        if ret != 0 {
-            anyhow::bail!("kill(SIGINT) failed: {}", std::io::Error::last_os_error());
-        }
-        Ok(())
+        crate::platform::send_interrupt(pid)
     }
 
     /// Update stored session_id (called when Init event arrives).
@@ -319,7 +327,7 @@ impl StreamJsonSession {
         self.kill().await?;
 
         // Build new command
-        let mut cmd = Command::new("claude");
+        let mut cmd = Command::new(crate::setup::resolved_claude_binary());
         cmd.args([
             "-p",
             "--output-format", "stream-json",
@@ -341,7 +349,7 @@ impl StreamJsonSession {
         }
 
         // Expand sandbox to home directory (same as spawn)
-        if let Ok(home) = std::env::var("HOME") {
+        if let Some(home) = crate::platform::home_dir() {
             cmd.args(["--add-dir", &home]);
         }
 
@@ -350,6 +358,12 @@ impl StreamJsonSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit()) // inherit to avoid deadlock if buffer fills
             .env_remove("CLAUDECODE"); // allow spawning inside a Claude Code session
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
 
         for (k, v) in &self.env_vars {
             cmd.env(k, v);
@@ -377,7 +391,7 @@ impl StreamJsonSession {
         self.kill().await?;
 
         // Build new command — same base args as spawn() but NO --resume
-        let mut cmd = Command::new("claude");
+        let mut cmd = Command::new(crate::setup::resolved_claude_binary());
         cmd.args([
             "-p",
             "--output-format", "stream-json",
@@ -393,7 +407,7 @@ impl StreamJsonSession {
         }
 
         // Expand sandbox to user's home directory
-        if let Ok(home) = std::env::var("HOME") {
+        if let Some(home) = crate::platform::home_dir() {
             cmd.args(["--add-dir", &home]);
         }
 
@@ -406,6 +420,12 @@ impl StreamJsonSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .env_remove("CLAUDECODE");
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
 
         for (k, v) in &self.env_vars {
             cmd.env(k, v);

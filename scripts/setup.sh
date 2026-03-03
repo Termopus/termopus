@@ -22,10 +22,11 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 # ── Prerequisites ──────────────────────────────────────────────────
 check_prereqs() {
     local missing=()
+    command -v claude   >/dev/null 2>&1 || missing+=("claude (Claude Code CLI — https://docs.anthropic.com/en/docs/claude-code)")
     command -v wrangler >/dev/null 2>&1 || missing+=("wrangler (npm install -g wrangler)")
     command -v npm      >/dev/null 2>&1 || missing+=("npm")
-    command -v flutter  >/dev/null 2>&1 || missing+=("flutter")
-    command -v cargo    >/dev/null 2>&1 || missing+=("cargo")
+    command -v flutter  >/dev/null 2>&1 || missing+=("flutter (https://docs.flutter.dev/get-started/install)")
+    command -v cargo    >/dev/null 2>&1 || missing+=("cargo (https://rustup.rs/) — not needed if using pre-built bridge binary")
     command -v openssl  >/dev/null 2>&1 || missing+=("openssl")
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -243,10 +244,16 @@ main() {
     echo "  1. Build the Flutter app:"
     echo "     cd app && flutter pub get && flutter run"
     echo ""
-    echo "  2. Build and run the bridge:"
-    echo "     cd bridge && cargo build --release"
     local ws_url="${relay_url/https:/wss:}"
-    echo "     ./target/release/termopus --relay $ws_url"
+    echo "  2. Run the bridge (pick one):"
+    echo ""
+    echo "     Option A — Pre-built binary (no Rust needed):"
+    echo "       Download from: https://github.com/Termopus/termopus/releases"
+    echo "       ./termopus --relay $ws_url"
+    echo ""
+    echo "     Option B — Build from source:"
+    echo "       cd bridge && cargo build --release"
+    echo "       ./target/release/termopus --relay $ws_url"
     echo ""
     echo "  3. Scan the QR code from the bridge with your phone"
     echo ""

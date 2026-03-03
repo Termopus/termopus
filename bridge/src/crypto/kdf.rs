@@ -53,9 +53,8 @@ pub fn derive_aes_key(shared_secret: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
 
     // Lock the key memory to prevent swapping to disk.
     // This ensures the AES key material stays in RAM and never appears in swap files.
-    #[cfg(unix)]
     unsafe {
-        libc::mlock(key.as_ptr() as *const libc::c_void, 32);
+        crate::platform::lock_memory(key.as_ptr(), 32);
     }
 
     Ok(key)

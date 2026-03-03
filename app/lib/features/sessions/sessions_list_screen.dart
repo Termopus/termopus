@@ -22,7 +22,8 @@ class SessionsListScreen extends ConsumerStatefulWidget {
   ConsumerState<SessionsListScreen> createState() => _SessionsListScreenState();
 }
 
-class _SessionsListScreenState extends ConsumerState<SessionsListScreen> {
+class _SessionsListScreenState extends ConsumerState<SessionsListScreen>
+    with WidgetsBindingObserver {
   // ── Multi-select state (Task 5) ──
   bool _isSelectionMode = false;
   final Set<String> _selectedIds = {};
@@ -31,7 +32,15 @@ class _SessionsListScreenState extends ConsumerState<SessionsListScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
   }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
 
 
 
