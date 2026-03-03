@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/Android-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Android" />
   <img src="https://img.shields.io/badge/macOS-000000?style=flat-square&logo=apple&logoColor=white" alt="macOS" />
   <img src="https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux" />
-  <img src="https://img.shields.io/badge/Windows_(soon)-0078D6?style=flat-square&logo=windows&logoColor=white" alt="Windows (coming soon)" />
+  <img src="https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=windows&logoColor=white" alt="Windows" />
 </p>
 
 <br />
@@ -81,7 +81,7 @@ The **bridge** runs alongside Claude Code on your computer. It connects to a **C
 | Component | Tech | Description |
 |-----------|------|-------------|
 | **Phone App** | Flutter (iOS / Android) | Chat UI, biometric auth, hardware-backed keys |
-| **Bridge** | Rust (macOS / Linux) | Runs alongside Claude Code, encrypts all traffic |
+| **Bridge** | Rust (macOS / Linux / Windows) | Runs alongside Claude Code, encrypts all traffic |
 | **Relay** | Cloudflare Durable Objects | Stateful WebSocket relay, opaque message forwarding |
 | **Provisioning API** | Cloudflare Workers | Device certificate issuance, challenge-response auth |
 
@@ -92,9 +92,10 @@ The **bridge** runs alongside Claude Code on your computer. It connects to a **C
 | Tool | Version | Install |
 |------|---------|---------|
 | Cloudflare account | Free tier | [Sign up](https://dash.cloudflare.com/sign-up) |
+| Claude Code | Latest | [Install](https://docs.anthropic.com/en/docs/claude-code) |
 | Node.js | 18+ | [nodejs.org](https://nodejs.org/) |
 | Flutter | 3.11+ | [flutter.dev](https://docs.flutter.dev/get-started/install) |
-| Rust | Latest stable | [rustup.rs](https://rustup.rs/) |
+| Rust | Latest stable | [rustup.rs](https://rustup.rs/) (only if building from source) |
 | wrangler | Latest | `npm install -g wrangler` |
 | OpenSSL | Any | Pre-installed on macOS/Linux |
 
@@ -126,6 +127,27 @@ flutter run
 ```
 
 ### 3. Run the Bridge
+
+**Option A: Pre-built binary**
+
+Download the latest release for your platform from the [Releases page](https://github.com/Termopus/termopus/releases):
+
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | `Termopus-vX.Y.Z-macos-arm64.tar.gz` |
+| Windows (x86_64) | `Termopus-vX.Y.Z-windows-x86_64.msi` |
+| Linux (x86_64) | `Termopus-vX.Y.Z-linux-x86_64.tar.gz` |
+
+For macOS/Linux, extract and run:
+
+```bash
+tar -xzf Termopus-*.tar.gz
+./Termopus-*/termopus --relay wss://YOUR_RELAY_WORKER_URL
+```
+
+For Windows, run the MSI installer and launch Termopus from the Start Menu.
+
+**Option B: Build from source**
 
 ```bash
 cd bridge
@@ -214,7 +236,7 @@ termopus/
 
 ## Roadmap
 
-- **Windows support** — Bridge for Windows is in development. Stay tuned.
+- **App store releases** — iOS and Android app store listings
 
 ## Contributing
 
