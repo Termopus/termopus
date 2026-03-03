@@ -104,9 +104,17 @@ The **bridge** runs alongside Claude Code on your computer. It connects to a **C
 ```bash
 git clone https://github.com/Termopus/termopus.git
 cd termopus
-
 wrangler login
+```
+
+**macOS / Linux:**
+```bash
 ./scripts/setup.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+.\scripts\setup.ps1
 ```
 
 The setup script will:
