@@ -4,17 +4,22 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   release:
     name: Tag & Release
     if: >-
       github.repository == 'Termopus/termopus' &&
-      github.event.pull_request.merged == true &&
-      startsWith(github.event.pull_request.head.ref, 'sync/')
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.pull_request.merged == true &&
+        startsWith(github.event.pull_request.head.ref, 'sync/')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      new_tag: ${{ steps.version.outputs.new_tag }}
+      skip: ${{ steps.version.outputs.skip }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,3 +133,135 @@ jobs:
             --title "$NEW_TAG" \
             --notes "${{ steps.changelog.outputs.body }}" \
             --latest
+
+  build-macos:
+    name: Build macOS (arm64)
+    needs: release
+    if: needs.release.outputs.skip == 'false'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.new_tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+
+      - name: Build bridge
+        working-directory: bridge
+        run: cargo build --release
+
+      - name: Package
+        working-directory: bridge
+        run: |
+          TAG="${{ needs.release.outputs.new_tag }}"
+          mkdir -p "Termopus-${TAG}"
+          cp target/release/termopus "Termopus-${TAG}/"
+          cp target/release/termopus-hook "Termopus-${TAG}/"
+          tar -czf "Termopus-${TAG}-macos-arm64.tar.gz" "Termopus-${TAG}/"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ needs.release.outputs.new_tag }}"
+          gh release upload "$TAG" "bridge/Termopus-${TAG}-macos-arm64.tar.gz"
+
+  build-windows:
+    name: Build Windows (x86_64)
+    needs: release
+    if: needs.release.outputs.skip == 'false'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.new_tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+
+      - name: Build bridge
+        working-directory: bridge
+        run: cargo build --release
+
+      - name: Create MSI
+        working-directory: bridge
+        shell: bash
+        run: |
+          cargo install cargo-wix
+          cargo wix --no-build --nocapture
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ needs.release.outputs.new_tag }}"
+          MSI=$(find bridge/target/wix -name '*.msi' | head -1)
+          DEST="Termopus-${TAG}-windows-x86_64.msi"
+          cp "$MSI" "$DEST"
+          gh release upload "$TAG" "$DEST"
+
+  build-linux:
+    name: Build Linux (x86_64)
+    needs: release
+    if: needs.release.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.new_tag }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libssl-dev libgtk-3-dev libdbus-1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+
+      - name: Build bridge
+        working-directory: bridge
+        run: cargo build --release
+
+      - name: Package
+        working-directory: bridge
+        run: |
+          TAG="${{ needs.release.outputs.new_tag }}"
+          mkdir -p "Termopus-${TAG}"
+          cp target/release/termopus "Termopus-${TAG}/"
+          cp target/release/termopus-hook "Termopus-${TAG}/"
+          tar -czf "Termopus-${TAG}-linux-x86_64.tar.gz" "Termopus-${TAG}/"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ needs.release.outputs.new_tag }}"
+          gh release upload "$TAG" "bridge/Termopus-${TAG}-linux-x86_64.tar.gz"
