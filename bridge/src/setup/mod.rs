@@ -44,7 +44,7 @@ impl PreflightResult {
         if !self.claude_ok {
             instructions.push((
                 "Install Claude Code".to_string(),
-                "Open Terminal and run:\nnpm install -g @anthropic-ai/claude-code".to_string(),
+                "Windows PowerShell:\n  irm https://claude.ai/install.ps1 | iex\n\nmacOS / Linux:\n  curl -fsSL https://claude.ai/install.sh | bash".to_string(),
             ));
         }
 
@@ -66,6 +66,15 @@ impl PreflightResult {
 /// loop can detect a fresh install.
 static CLAUDE_PATH: OnceCell<(String, String)> = OnceCell::const_new();
 
+/// Returns the resolved Claude binary path (e.g. "claude.cmd" on Windows),
+/// falling back to "claude" if not yet resolved via preflight.
+pub fn resolved_claude_binary() -> String {
+    CLAUDE_PATH
+        .get()
+        .map(|(path, _)| path.clone())
+        .unwrap_or_else(|| "claude".to_string())
+}
+
 /// Check if Claude Code is installed, searching common locations.
 /// Successful finds are cached so subsequent calls return instantly.
 /// Failed lookups re-probe each time (setup loop can detect fresh install).
@@ -75,23 +84,21 @@ async fn check_claude() -> (bool, Option<String>, Option<String>) {
         return (true, Some(path.clone()), Some(version.clone()));
     }
 
-    let home = std::env::var("HOME").unwrap_or_default();
-    let candidates = [
-        "claude".to_string(),
-        format!("{}/.local/bin/claude", home),
-        format!("{}/.cargo/bin/claude", home),
-        "/usr/local/bin/claude".to_string(),
-        "/opt/homebrew/bin/claude".to_string(),
-        format!("{}/.npm-global/bin/claude", home),
-        "/usr/local/opt/node/bin/claude".to_string(),
-    ];
+    let home = crate::platform::home_dir().unwrap_or_default();
+    let candidates = crate::platform::claude_binary_candidates(&home);
 
     for path in &candidates {
-        if let Ok(output) = tokio::process::Command::new(path)
-            .arg("--version")
-            .output()
-            .await
+        let mut cmd = tokio::process::Command::new(path);
+        cmd.arg("--version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        // Suppress the flash of a console window on Windows when probing .cmd files
+        #[cfg(windows)]
         {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        if let Ok(output) = cmd.output().await {
             if output.status.success() {
                 let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let _ = CLAUDE_PATH.set((path.clone(), version.clone()));
@@ -103,25 +110,32 @@ async fn check_claude() -> (bool, Option<String>, Option<String>) {
     (false, None, None)
 }
 
-/// Check macOS permissions for running terminal commands from GUI
+/// Check macOS permissions for running terminal commands from GUI.
+/// On Windows this check is not needed — always returns ok.
 async fn check_permissions() -> (bool, Option<String>) {
-    // Test: Can we execute basic commands?
-    let basic_test = tokio::process::Command::new("echo")
-        .arg("test")
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    #[cfg(windows)]
+    return (true, None);
 
-    if !basic_test {
-        return (false, Some(
-            "Cannot execute commands.\n\n\
-             Go to: System Settings → Privacy & Security → Developer Tools\n\
-             Enable Termopus in the list.".to_string()
-        ));
+    #[cfg(not(windows))]
+    {
+        // Test: Can we execute basic commands?
+        let basic_test = tokio::process::Command::new("echo")
+            .arg("test")
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if !basic_test {
+            return (false, Some(
+                "Cannot execute commands.\n\n\
+                 Go to: System Settings → Privacy & Security → Developer Tools\n\
+                 Enable Termopus in the list.".to_string()
+            ));
+        }
+
+        (true, None)
     }
-
-    (true, None)
 }
 
 /// Run complete pre-flight check

@@ -131,7 +131,10 @@ fn settings_local_path() -> PathBuf {
     // Use HOME env var — not dirs crate (hook binary is standalone, minimal deps).
     // If HOME is unset, return a path that won't exist — load_permissions() handles
     // missing file gracefully by returning empty rules (= Ask for everything).
+    #[cfg(unix)]
     let home = env::var("HOME").unwrap_or_else(|_| "/nonexistent".to_string());
+    #[cfg(windows)]
+    let home = env::var("USERPROFILE").unwrap_or_else(|_| "C:\\nonexistent".to_string());
     PathBuf::from(home).join(".claude").join("settings.local.json")
 }
 

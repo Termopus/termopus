@@ -46,8 +46,8 @@ const CERTIFICATE_VALIDITY_DAYS = 2;
 /** Allowed platform values. */
 const VALID_PLATFORMS: ReadonlySet<string> = new Set(['ios', 'android']);
 
-/** Minimum re-provisioning interval per device (24 hours). */
-const DEVICE_COOLDOWN_SECONDS = 24 * 60 * 60;
+/** Default re-provisioning cooldown (1 hour). Override via DEVICE_COOLDOWN_SECONDS env var. */
+const DEFAULT_DEVICE_COOLDOWN_SECONDS = 3600;
 
 // ---------------------------------------------------------------------------
 // Handler
@@ -78,6 +78,7 @@ export async function handleProvision(request: Request, env: Env): Promise<Respo
   }
 
   // ---- 1. Validate required fields -----------------------------------------
+  const deviceCooldownSeconds = Math.max(60, parseInt(env.DEVICE_COOLDOWN_SECONDS ?? '', 10) || DEFAULT_DEVICE_COOLDOWN_SECONDS);
   const requireIntegrity = (env.REQUIRE_DEVICE_INTEGRITY ?? 'off').toLowerCase();
   const missingFields: string[] = [];
   if (!body.csr) missingFields.push('csr');
@@ -350,7 +351,7 @@ export async function handleProvision(request: Request, env: Env): Promise<Respo
       platform: body.platform,
       provisionedAt: new Date().toISOString(),
     }),
-    { expirationTtl: DEVICE_COOLDOWN_SECONDS },
+    { expirationTtl: deviceCooldownSeconds },
   );
 
   // ---- 10. Build and return response ----------------------------------------

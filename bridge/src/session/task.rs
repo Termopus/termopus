@@ -121,12 +121,54 @@ async fn run_session_inner(
             &session_id[..8.min(session_id.len())], &sid[..8.min(sid.len())]);
     }
 
+    // ── Early preflight check ────────────────────────────────────────────
+    // If Claude is not installed, show the setup screen immediately instead
+    // of failing with a cryptic spawn error. Poll every 500 ms until resolved.
+    {
+        let early_preflight = crate::setup::preflight_check().await;
+        if !early_preflight.is_ready() {
+            let issues = early_preflight.fix_instructions();
+            {
+                let mut mgr = manager.write().await;
+                if let Some(session) = mgr.get_session_mut(session_id) {
+                    session.setup_issues = issues;
+                    session.status = SessionStatus::SetupRequired;
+                }
+            }
+            let mut interval = tokio::time::interval(Duration::from_millis(500));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let pf = crate::setup::preflight_check().await;
+                        if pf.is_ready() { break; }
+                        let issues = pf.fix_instructions();
+                        let mut mgr = manager.write().await;
+                        if let Some(session) = mgr.get_session_mut(session_id) {
+                            session.setup_issues = issues;
+                        }
+                    }
+                    cmd = cmd_rx.recv() => {
+                        match cmd {
+                            Some(SessionCommand::Terminate) | Some(SessionCommand::Shutdown) | None => return Ok(()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            // Claude is now available — clear setup state and proceed
+            let mut mgr = manager.write().await;
+            if let Some(session) = mgr.get_session_mut(session_id) {
+                session.setup_issues.clear();
+                session.status = SessionStatus::Initializing;
+            }
+        }
+    }
+
     // ── Prepare Claude spawn inputs BEFORE pairing ──────────────────────
     // env_vars and rules_file are needed by the spawn future, so we set
     // them up eagerly. The spawn itself is kicked off in parallel with
     // relay pairing to save 2-5 s of startup latency.
-    let working_dir = std::env::var("HOME")
-        .unwrap_or_else(|_| "/tmp".to_string());
+    let working_dir = crate::platform::home_dir_or_temp();
     let outbox = crate::file_transfer::protocol::outbox_dir(session_id)
         .map(|p| p.display().to_string())
         .unwrap_or_default();
@@ -139,7 +181,13 @@ async fn run_session_inner(
         ("TERMOPUS_RECEIVED".to_string(), received),
     ];
     let rules = crate::hooks::config::build_termopus_rules();
-    let rules_file = format!("/tmp/termopus-rules-{}.md", &session_id[..12.min(session_id.len())]);
+    let ipc_dir = crate::platform::ipc_base();
+    if let Err(e) = std::fs::create_dir_all(&ipc_dir) {
+        tracing::error!("Failed to create IPC dir {}: {}", ipc_dir.display(), e);
+    }
+    let rules_file = ipc_dir
+        .join(format!("termopus-rules-{}.md", &session_id[..12.min(session_id.len())]))
+        .display().to_string();
     if let Err(e) = std::fs::write(&rules_file, &rules) {
         tracing::error!("Failed to write rules file {}: {}", rules_file, e);
     }
@@ -149,7 +197,8 @@ async fn run_session_inner(
     // but the `claude` binary takes 2-5 s to initialize internally.
     // By spawning here, Claude warms up in the background while we connect
     // to the relay and wait for the phone to pair — saving that startup time.
-    let stream_session = match StreamJsonSession::spawn(
+    let env_vars_retry = env_vars.clone();
+    let mut stream_session = match StreamJsonSession::spawn(
         &working_dir,
         resume_claude_sid.as_deref(),
         env_vars,
@@ -173,6 +222,87 @@ async fn run_session_inner(
             return Err(e);
         }
     };
+
+    // ── Post-spawn health check ────────────────────────────────────────
+    // If Claude exits within 5 s of spawning, it's likely an auth or
+    // subscription issue. Catch it now and show setup instructions
+    // before presenting the QR code.
+    {
+        let mut healthy = true;
+        for _ in 0..25 { // 25 × 200 ms = 5 s
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            if let Some(false) = stream_session.is_running() {
+                healthy = false;
+                break;
+            }
+        }
+
+        if !healthy {
+            tracing::warn!("[{}] Claude exited within 5 s of spawn — likely auth/subscription issue",
+                &session_id[..12.min(session_id.len())]);
+
+            let issues = vec![(
+                "Authenticate Claude Code".to_string(),
+                "Open a terminal and run:\n  claude\n\n\
+                 This will guide you through logging in.\n\
+                 Make sure you have an active Claude subscription.".to_string(),
+            )];
+            {
+                let mut mgr = manager.write().await;
+                if let Some(session) = mgr.get_session_mut(session_id) {
+                    session.setup_issues = issues;
+                    session.status = SessionStatus::SetupRequired;
+                }
+            }
+
+            // Poll until Claude can start successfully
+            let mut interval = tokio::time::interval(Duration::from_secs(3));
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match StreamJsonSession::spawn(
+                            &working_dir,
+                            None,
+                            env_vars_retry.clone(),
+                            Some(&rules_file),
+                        ).await {
+                            Ok(mut test_session) => {
+                                // Check if the new process survives 3 seconds
+                                let mut ok = true;
+                                for _ in 0..15 { // 15 × 200 ms = 3 s
+                                    tokio::time::sleep(Duration::from_millis(200)).await;
+                                    if let Some(false) = test_session.is_running() {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                if ok {
+                                    stream_session = test_session;
+                                    break;
+                                }
+                                // Still failing — kill test process and continue polling
+                                let _ = test_session.kill().await;
+                            }
+                            Err(_) => {} // Spawn failed, continue polling
+                        }
+                    }
+                    cmd = cmd_rx.recv() => {
+                        match cmd {
+                            Some(SessionCommand::Terminate) | Some(SessionCommand::Shutdown) | None => return Ok(()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            // Claude is now healthy — clear setup state and proceed
+            let mut mgr = manager.write().await;
+            if let Some(session) = mgr.get_session_mut(session_id) {
+                session.setup_issues.clear();
+                session.status = SessionStatus::Initializing;
+            }
+        }
+    }
 
     // Generate keypair and QR data
     let keypair = SessionKeyPair::generate();
@@ -239,6 +369,7 @@ async fn run_session_inner(
             let mut mgr = manager.write().await;
             if let Some(session) = mgr.get_session_mut(session_id) {
                 session.setup_issues = issues;
+                // Keep Connected status — phone is already paired, just waiting for Claude
             }
         }
 
@@ -287,11 +418,12 @@ async fn run_session_inner(
             anyhow::bail!("Setup did not complete");
         }
 
-        // Clear setup issues
+        // Clear setup issues and restore Connected status
         {
             let mut mgr = manager.write().await;
             if let Some(session) = mgr.get_session_mut(session_id) {
                 session.setup_issues.clear();
+                session.status = SessionStatus::Connected;
             }
         }
     }
@@ -620,16 +752,9 @@ async fn run_bridge_loop(
                                                 let _ = client.send_raw_json(j).await;
                                             }
                                         }
-                                        // Launch interactive terminal via osascript
+                                        // Launch interactive terminal
                                         let resume_cmd = format!("claude --resume {}", csid);
-                                        let apple_script = format!(
-                                            "tell application \"Terminal\" to do script \"{}\"",
-                                            resume_cmd
-                                        );
-                                        match tokio::process::Command::new("osascript")
-                                            .args(["-e", &apple_script])
-                                            .spawn()
-                                        {
+                                        match crate::platform::open_terminal(&resume_cmd).await {
                                             Ok(child) => {
                                                 terminal_child = Some(child);
                                                 tracing::info!("[{}] Terminal launched: {}", &session_id[..12.min(session_id.len())], resume_cmd);
@@ -674,10 +799,9 @@ async fn run_bridge_loop(
                                     }
                                     // Kill any interactive claude --resume processes (only if we have a valid session ID)
                                     if let Some(ref csid) = claude_session_id {
-                                        let _ = tokio::process::Command::new("pkill")
-                                            .args(["-f", &format!("claude --resume {}", csid)])
-                                            .status()
-                                            .await;
+                                        let _ = crate::platform::kill_by_pattern(
+                                            &format!("claude --resume {}", csid)
+                                        ).await;
                                     }
                                     // Respawn stream-json
                                     handed_off = false;
@@ -1253,10 +1377,7 @@ async fn run_bridge_loop(
                                     // Open session file directory on the computer
                                     if let Some(dir) = crate::file_transfer::protocol::session_dir(session_id) {
                                         let _ = std::fs::create_dir_all(&dir);
-                                        #[cfg(target_os = "macos")]
-                                        let _ = std::process::Command::new("open").arg(&dir).spawn();
-                                        #[cfg(target_os = "linux")]
-                                        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+                                        crate::platform::open_folder(&dir);
                                         let msg = crate::parser::ParsedMessage::System {
                                             content: format!("Opened folder: {}", dir.display()),
                                         };
@@ -2276,7 +2397,7 @@ async fn run_bridge_loop(
                         // Create symlink so hooks find our IPC dirs.
                         // Claude doesn't propagate env vars to hooks, so the hook
                         // binary uses Claude's session_id (from event JSON) to locate
-                        // /tmp/termopus-{prefix}/. Our dirs use the bridge session_id.
+                        // the IPC dir. Our dirs use the bridge session_id.
                         // The symlink bridges the gap.
                         claude_session_id = Some(sid.clone());
                         // Persist for crash recovery (--resume on bridge restart)
@@ -2285,15 +2406,16 @@ async fn run_bridge_loop(
                         let claude_prefix = &sid[..8.min(sid.len())];
                         let bridge_prefix = &session_id[..8.min(session_id.len())];
                         if claude_prefix != bridge_prefix {
-                            let claude_dir = std::path::PathBuf::from("/tmp")
+                            let claude_dir = crate::platform::ipc_base()
                                 .join(format!("termopus-{}", claude_prefix));
-                            let bridge_dir = std::path::PathBuf::from("/tmp")
+                            let bridge_dir = crate::platform::ipc_base()
                                 .join(format!("termopus-{}", bridge_prefix));
                             if !claude_dir.exists() {
-                                #[cfg(unix)]
-                                {
-                                    let _ = std::os::unix::fs::symlink(&bridge_dir, &claude_dir);
-                                    tracing::info!("Symlinked {} -> {} for hook IPC",
+                                if let Err(e) = crate::platform::create_dir_link(&bridge_dir, &claude_dir) {
+                                    tracing::warn!("Failed to create IPC link {} -> {}: {}",
+                                        claude_dir.display(), bridge_dir.display(), e);
+                                } else {
+                                    tracing::info!("Linked {} -> {} for hook IPC",
                                         claude_dir.display(), bridge_dir.display());
                                 }
                             }
@@ -2697,9 +2819,9 @@ async fn run_bridge_loop(
         let claude_prefix = &csid[..8.min(csid.len())];
         let bridge_prefix = &session_id[..8.min(session_id.len())];
         if claude_prefix != bridge_prefix {
-            let symlink = std::path::PathBuf::from("/tmp").join(format!("termopus-{}", claude_prefix));
-            if symlink.symlink_metadata().map(|m| m.is_symlink()).unwrap_or(false) {
-                let _ = std::fs::remove_file(&symlink);
+            let link_path = crate::platform::ipc_base().join(format!("termopus-{}", claude_prefix));
+            if crate::platform::is_link(&link_path) {
+                let _ = std::fs::remove_file(&link_path);
             }
         }
     }
@@ -2794,7 +2916,7 @@ fn encode_path_for_claude(path: &str) -> String {
 /// and at each level check which real directory, when encoded, matches the
 /// expected project dir name prefix.
 fn resolve_project_dir(dir_name: &str) -> Option<String> {
-    // dir_name is e.g. "-Users-youruser-my-project"
+    // dir_name is e.g. "-Users-jdoe-my-project"
     // Start by listing top-level directories that could match
     // We know the path starts with /, so dir_name starts with -
     // Try to find the real path by walking from root
@@ -2807,7 +2929,7 @@ fn resolve_project_dir(dir_name: &str) -> Option<String> {
 
     // Smart resolution: walk from $HOME directory downward.
     // Most projects are under $HOME, so encode $HOME and match prefix.
-    let home = std::env::var("HOME").ok()?;
+    let home = crate::platform::home_dir()?;
     let home_encoded = encode_path_for_claude(&home);
 
     if !dir_name.starts_with(&home_encoded) {
@@ -2867,7 +2989,7 @@ fn resolve_project_dir(dir_name: &str) -> Option<String> {
 /// Scans `~/.claude/projects/*/sessions-index.json` for the given session UUID,
 /// then resolves the project dir name back to a real filesystem path.
 fn find_project_dir_for_session(session_uuid: &str) -> Option<String> {
-    let home = std::env::var("HOME").ok()?;
+    let home = crate::platform::home_dir()?;
     let projects_dir = std::path::PathBuf::from(&home).join(".claude/projects");
     if !projects_dir.exists() { return None; }
 
@@ -2909,7 +3031,7 @@ fn find_project_dir_for_session(session_uuid: &str) -> Option<String> {
 ///   ~/.claude/projects/<project-hash>/sessions-index.json
 /// We find the right project directory by matching the current working directory.
 fn read_sessions_index(project_cwd: Option<&str>) -> anyhow::Result<Vec<crate::parser::SessionEntry>> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = crate::platform::home_dir_or_temp();
     let projects_dir = std::path::PathBuf::from(&home).join(".claude/projects");
 
     if !projects_dir.exists() {
@@ -3008,7 +3130,7 @@ fn read_sessions_index(project_cwd: Option<&str>) -> anyhow::Result<Vec<crate::p
 /// Read installed plugins from ~/.claude/plugins/installed_plugins.json
 /// and check enabled status from ~/.claude/settings.json.
 fn read_plugins() -> anyhow::Result<Vec<crate::parser::PluginEntry>> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = crate::platform::home_dir_or_temp();
     let base = std::path::PathBuf::from(&home).join(".claude");
 
     // Read installed_plugins.json
@@ -3100,7 +3222,7 @@ fn read_plugins() -> anyhow::Result<Vec<crate::parser::PluginEntry>> {
 /// Read skills from global ~/.claude/skills/ and from all installed plugin skill directories.
 /// Parses YAML frontmatter from each SKILL.md for name and description.
 fn read_skills() -> anyhow::Result<Vec<crate::parser::SkillEntry>> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = crate::platform::home_dir_or_temp();
     let base = std::path::PathBuf::from(&home).join(".claude");
     let mut entries = Vec::new();
 
@@ -3189,7 +3311,7 @@ fn parse_skill_md(skill_dir: &std::path::Path, source: &str) -> Option<crate::pa
 
 /// Read rules from ~/.claude/rules/ (global) and optionally project-level.
 fn read_rules(project_cwd: Option<&str>) -> anyhow::Result<Vec<crate::parser::RuleEntry>> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = crate::platform::home_dir_or_temp();
     let base = std::path::PathBuf::from(&home).join(".claude");
     let mut entries = Vec::new();
 
@@ -3235,7 +3357,7 @@ fn read_rules(project_cwd: Option<&str>) -> anyhow::Result<Vec<crate::parser::Ru
 
 /// Read CLAUDE.md memory files from global (~/.claude/) and project CWD.
 fn read_memory(project_cwd: Option<&str>) -> anyhow::Result<Vec<crate::parser::MemoryEntry>> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = crate::platform::home_dir_or_temp();
     let base = std::path::PathBuf::from(&home).join(".claude");
     let mut entries = Vec::new();
 

@@ -20,10 +20,7 @@ class AppConstants {
   /// Replace 'YOUR_PROVISIONING_API_URL' with your deployed provisioning
   /// worker URL (e.g., 'https://termopus-provisioning-dev.yourname.workers.dev').
   /// Run scripts/setup.sh to set this automatically.
-  static const String provisioningApiBase =
-      bool.fromEnvironment('dart.vm.product')
-          ? 'https://YOUR_PROVISIONING_API_URL'
-          : 'https://YOUR_API_DEV_DOMAIN';
+  static const String provisioningApiBase = 'https://YOUR_PROVISIONING_API_URL';
   static const String provisioningCertEndpoint =
       '$provisioningApiBase/provision/cert';
   static const String provisioningChallengeEndpoint =

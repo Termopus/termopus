@@ -248,6 +248,7 @@ class SecureWebSocket internal constructor(val sessionId: String) {
         try {
             val request = Request.Builder()
                 .url(url)
+                .header("User-Agent", "Termopus/1.0")
                 .build()
 
             webSocket = sharedClient.newWebSocket(request, webSocketListener)

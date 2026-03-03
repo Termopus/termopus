@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WixLocalization Culture="en-us" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+
+    <!-- Welcome page -->
+    <String Id="WelcomeEulaDlgDescription">Termopus lets you control Claude Code from your phone with secure end-to-end encryption.
+
+This will install the Termopus desktop bridge on your computer. After installation, scan the QR code with the Termopus mobile app to connect.
+
+Click Install to continue, or Cancel to exit.</String>
+
+    <!-- Exit / finish page -->
+    <String Id="ExitDlgDescription">Termopus has been installed successfully. The app is starting now.
+
+Look for the octopus icon in your system tray, then open the Termopus app on your phone and scan the QR code to connect.</String>
+
+    <!-- Progress page title -->
+    <String Id="ProgressDlgTitleInstalling">Installing Termopus</String>
+
+</WixLocalization>

@@ -28,6 +28,8 @@ REQUIRE_DEVICE_INTEGRITY = "off"
 REQUIRE_KEY_ATTESTATION = "off"
 # Allow sideloaded/debug APKs (set to "false" for production with Play Store)
 ALLOW_SIDELOADED = "true"
+# Device provisioning cooldown in seconds (default: 3600 = 1 hour, min: 60)
+DEVICE_COOLDOWN_SECONDS = "3600"
 
 [[kv_namespaces]]
 binding = "PROVISION_KV"
@@ -60,6 +62,8 @@ REQUIRE_DEVICE_INTEGRITY = "off"
 REQUIRE_KEY_ATTESTATION = "off"
 # Allow sideloaded/debug APKs to skip certificate digest check
 ALLOW_SIDELOADED = "true"
+# Device provisioning cooldown in seconds (default: 3600 = 1 hour, min: 60)
+DEVICE_COOLDOWN_SECONDS = "3600"
 
 [[env.dev.kv_namespaces]]
 binding = "PROVISION_KV"

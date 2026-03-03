@@ -28,7 +28,7 @@ fn main() {
     // Debug trace — gated behind env var for observability without noise
     if env::var("TERMOPUS_HOOK_DEBUG").is_ok() {
         use std::io::Write as _;
-        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open("/tmp/termopus-hook-trace.log") {
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join("termopus-hook-trace.log")) {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -87,7 +87,12 @@ fn main() {
     // (which creates the dirs) and this hook binary (spawned by Claude Code).
     // /tmp/ is a stable, well-known path on all Unix systems.
     let session_prefix: String = session_id.chars().take(8).collect();
+    #[cfg(unix)]
     let ipc_base = std::path::Path::new("/tmp");
+    #[cfg(windows)]
+    let ipc_base_buf = std::env::temp_dir().join("Termopus");
+    #[cfg(windows)]
+    let ipc_base = ipc_base_buf.as_path();
     let primary_dir = ipc_base.join(format!("termopus-{}", &session_prefix));
 
     // No fallback scan — if the primary IPC directory doesn't exist, the bridge

@@ -1,0 +1,188 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<!--
+  WiX manifest for Termopus Windows installer (MSI).
+  Includes both termopus.exe (GUI bridge) and termopus-hook.exe (Claude Code hook).
+  Built by: cargo wix (from bridge/ directory)
+-->
+
+<?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
+    <?define PlatformProgramFilesFolder = "ProgramFiles64Folder" ?>
+<?else ?>
+    <?define PlatformProgramFilesFolder = "ProgramFilesFolder" ?>
+<?endif ?>
+
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+
+    <Product
+        Id='*'
+        Name='Termopus'
+        UpgradeCode='B7E6D4A2-8F31-4C5E-9A1D-3F2E7B8C4D6A'
+        Manufacturer='Termopus Contributors'
+        Language='1033'
+        Codepage='1252'
+        Version='$(var.Version)'>
+
+        <Package Id='*'
+            Keywords='Installer'
+            Description='Control Claude Code from your phone'
+            Manufacturer='Termopus Contributors'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            InstallScope='perMachine'
+            SummaryCodepage='1252'/>
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed. Setup will now exit.'/>
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+        <Property Id='DiskPrompt' Value='Termopus Installation'/>
+
+        <Icon Id='ProductIcon' SourceFile='resources\termopus.ico'/>
+        <Property Id='ARPPRODUCTICON' Value='ProductIcon'/>
+
+        <!-- Branded installer images and license -->
+        <WixVariable Id='WixUIBannerBmp' Value='wix\banner.bmp'/>
+        <WixVariable Id='WixUIDialogBmp' Value='wix\dialog.bmp'/>
+        <WixVariable Id='WixUILicenseRtf' Value='wix\license.rtf'/>
+
+        <!-- Launch app immediately after install (runs as interactive user) -->
+        <Property Id='WixShellExecTarget' Value='[#termopus_exe_file]'/>
+        <CustomAction Id='LaunchApplication'
+            BinaryKey='WixCA'
+            DllEntry='WixShellExec'
+            Impersonate='yes'/>
+        <InstallExecuteSequence>
+            <Custom Action='LaunchApplication' After='InstallFinalize'>
+                NOT (REMOVE="ALL")
+            </Custom>
+        </InstallExecuteSequence>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='Termopus'>
+
+                    <Directory Id='Bin' Name='bin'>
+                        <!-- Add bin/ to PATH so termopus-hook is discoverable -->
+                        <Component Id='Path' Guid='A1B2C3D4-E5F6-7890-ABCD-EF1234567890'>
+                            <Environment
+                                Id='PATH'
+                                Name='PATH'
+                                Value='[Bin]'
+                                Permanent='no'
+                                Part='last'
+                                Action='set'
+                                System='yes'/>
+                            <RegistryValue
+                                Root='HKCU'
+                                Key='Software\Termopus\PathComponent'
+                                Name='installed'
+                                Type='integer'
+                                Value='1'
+                                KeyPath='yes'/>
+                        </Component>
+
+                        <!-- Main bridge GUI executable -->
+                        <Component Id='termopus_exe' Guid='*'>
+                            <File
+                                Id='termopus_exe_file'
+                                Name='termopus.exe'
+                                DiskId='1'
+                                Source='$(var.CargoTargetBinDir)\termopus.exe'
+                                KeyPath='yes'/>
+                        </Component>
+
+                        <!-- Hook binary (invoked by Claude Code via settings.local.json) -->
+                        <Component Id='termopus_hook_exe' Guid='*'>
+                            <File
+                                Id='termopus_hook_exe_file'
+                                Name='termopus-hook.exe'
+                                DiskId='1'
+                                Source='$(var.CargoTargetBinDir)\termopus-hook.exe'
+                                KeyPath='yes'/>
+                        </Component>
+                    </Directory>
+
+                </Directory>
+            </Directory>
+
+            <!-- Start Menu shortcut folder -->
+            <Directory Id='ProgramMenuFolder'>
+                <Directory Id='ApplicationProgramsFolder' Name='Termopus'/>
+            </Directory>
+        </Directory>
+
+        <!-- Start Menu shortcut -->
+        <DirectoryRef Id='ApplicationProgramsFolder'>
+            <Component Id='StartMenuShortcut' Guid='*'>
+                <Shortcut
+                    Id='TermopusStartMenuShortcut'
+                    Name='Termopus'
+                    Description='Control Claude Code from your phone'
+                    Target='[#termopus_exe_file]'
+                    WorkingDirectory='Bin'
+                    Icon='ProductIcon'/>
+                <RemoveFolder Id='CleanUpShortcut' Directory='ApplicationProgramsFolder' On='uninstall'/>
+                <RegistryValue
+                    Root='HKCU'
+                    Key='Software\Termopus\Termopus'
+                    Name='installed'
+                    Type='integer'
+                    Value='1'
+                    KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
+
+        <!-- Auto-launch on login (Registry Run key) -->
+        <DirectoryRef Id='Bin'>
+            <Component Id='AutoLaunch' Guid='*'>
+                <RegistryValue
+                    Root='HKCU'
+                    Key='SOFTWARE\Microsoft\Windows\CurrentVersion\Run'
+                    Name='Termopus'
+                    Type='string'
+                    Value='[#termopus_exe_file]'
+                    KeyPath='yes'/>
+            </Component>
+        </DirectoryRef>
+
+        <Feature
+            Id='Binaries'
+            Title='Termopus'
+            Description='Installs Termopus bridge and hook binaries.'
+            Level='1'
+            ConfigurableDirectory='APPLICATIONFOLDER'
+            AllowAdvertise='no'
+            Display='expand'
+            Absent='disallow'>
+
+            <ComponentRef Id='termopus_exe'/>
+            <ComponentRef Id='termopus_hook_exe'/>
+            <ComponentRef Id='StartMenuShortcut'/>
+            <ComponentRef Id='AutoLaunch'/>
+
+            <Feature
+                Id='Environment'
+                Title='PATH Environment Variable'
+                Description='Add Termopus to the PATH system environment variable. Required for Claude Code hook integration.'
+                Level='1'
+                Absent='allow'>
+                <ComponentRef Id='Path'/>
+            </Feature>
+        </Feature>
+
+        <SetProperty Id='ARPINSTALLLOCATION' Value='[APPLICATIONFOLDER]' After='CostFinalize'/>
+
+        <!-- Branded minimal UI -->
+        <UI>
+            <UIRef Id='WixUI_Minimal'/>
+        </UI>
+
+        <!-- Custom text on the finish dialog -->
+        <Property Id='WIXUI_EXITDIALOGOPTIONALTEXT'
+            Value='Termopus is starting now. Look for the octopus icon in your system tray. On your phone, open the Termopus app and scan the QR code to connect.'/>
+
+    </Product>
+
+</Wix>

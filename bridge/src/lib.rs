@@ -4,6 +4,7 @@ pub mod file_transfer;
 pub mod hooks;
 pub mod parser;
 pub mod pin;
+pub mod platform;
 pub mod qr;
 pub mod relay;
 pub mod http_tunnel;

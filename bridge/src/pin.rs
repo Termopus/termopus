@@ -298,8 +298,7 @@ mod tests {
             set_pin("1234").unwrap();
 
             // Overwrite with garbage
-            let path = std::path::PathBuf::from(std::env::var("HOME").unwrap())
-                .join("Library/Application Support/claude-remote/bridge-pin.hash");
+            let path = base_dir().join("bridge-pin.hash");
             std::fs::write(&path, "not-a-valid-argon2-hash").unwrap();
 
             // verify_pin should return Err, not Ok(false) or Ok(true)
@@ -313,8 +312,7 @@ mod tests {
         with_temp_home(|| {
             set_pin("1234").unwrap();
 
-            let path = std::path::PathBuf::from(std::env::var("HOME").unwrap())
-                .join("Library/Application Support/claude-remote/bridge-pin.hash");
+            let path = base_dir().join("bridge-pin.hash");
             std::fs::write(&path, "").unwrap();
 
             let result = verify_pin("1234");

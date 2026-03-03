@@ -1,28 +1,6 @@
 use anyhow::Result;
 use std::fs;
 
-/// Acquire an exclusive file lock on settings.local.json.lock to prevent
-/// concurrent read-modify-write races when multiple bridge instances start.
-/// Returns the lock file handle — lock is held until the handle is dropped.
-#[cfg(unix)]
-fn acquire_settings_lock(claude_dir: &std::path::Path) -> Result<fs::File> {
-    use std::os::unix::io::AsRawFd;
-
-    let lock_path = claude_dir.join("settings.local.json.lock");
-    let lock_file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .open(&lock_path)?;
-
-    let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) };
-    if ret != 0 {
-        return Err(anyhow::anyhow!(
-            "Failed to acquire settings lock: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(lock_file)
-}
 
 /// Configures Claude Code hooks to use the termopus-hook binary.
 ///
@@ -41,8 +19,8 @@ pub fn configure_hooks(hook_binary_path: &str) -> Result<()> {
     fs::create_dir_all(&claude_dir)?;
 
     // Acquire exclusive lock before read-modify-write
-    #[cfg(unix)]
-    let _lock = acquire_settings_lock(&claude_dir)?;
+    let lock_path = claude_dir.join("settings.local.json.lock");
+    let _lock = crate::platform::acquire_file_lock(&lock_path)?;
 
     let settings_path = claude_dir.join("settings.local.json");
 
@@ -58,11 +36,7 @@ pub fn configure_hooks(hook_binary_path: &str) -> Result<()> {
 
     // Shell-quote the path to handle spaces (e.g. "Application Support").
     // Claude Code passes hook commands through `sh -c`, so unquoted spaces break.
-    let quoted_path = if hook_binary_path.contains(' ') {
-        format!("'{}'", hook_binary_path)
-    } else {
-        hook_binary_path.to_string()
-    };
+    let quoted_path = crate::platform::quote_shell_path(hook_binary_path);
 
     // Build hooks configuration
     let hook_entry = serde_json::json!([
@@ -138,25 +112,17 @@ pub fn find_hook_binary() -> Result<String> {
     // Check next to current executable
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(parent) = exe_path.parent() {
-            let hook_path = parent.join("termopus-hook");
+            let hook_name = if cfg!(windows) { "termopus-hook.exe" } else { "termopus-hook" };
+            let hook_path = parent.join(hook_name);
             if hook_path.exists() {
                 return Ok(hook_path.to_string_lossy().to_string());
             }
         }
     }
 
-    // Check in PATH (Unix-only; `which` is not available on Windows)
-    #[cfg(unix)]
-    if let Ok(output) = std::process::Command::new("which")
-        .arg("termopus-hook")
-        .output()
-    {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Ok(path);
-            }
-        }
+    // Check in PATH using platform-specific tool (which/where.exe)
+    if let Some(path) = crate::platform::find_in_path("termopus-hook") {
+        return Ok(path);
     }
 
     Err(anyhow::anyhow!("termopus-hook binary not found"))
@@ -215,8 +181,8 @@ pub fn remove_hooks() -> Result<()> {
     }
 
     // Acquire exclusive lock before read-modify-write
-    #[cfg(unix)]
-    let _lock = acquire_settings_lock(&claude_dir)?;
+    let lock_path = claude_dir.join("settings.local.json.lock");
+    let _lock = crate::platform::acquire_file_lock(&lock_path)?;
 
     let content = fs::read_to_string(&settings_path)?;
     let mut settings: serde_json::Value = serde_json::from_str(&content)?;
