@@ -20,6 +20,7 @@ jobs:
     outputs:
       new_tag: ${{ steps.version.outputs.new_tag }}
       skip: ${{ steps.version.outputs.skip }}
+      bridge_changed: ${{ steps.changes.outputs.bridge_changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,6 +64,27 @@ jobs:
 
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
           echo "Releasing $NEW_TAG (previous: $LATEST_TAG, $COMMIT_COUNT new commits)"
+
+      - name: Check for bridge changes
+        id: changes
+        if: steps.version.outputs.skip == 'false'
+        run: |
+          LATEST_TAG="${{ steps.version.outputs.latest_tag }}"
+          if [ "$LATEST_TAG" = "v0.0.0" ]; then
+            CHANGED_FILES=$(git diff --name-only HEAD)
+          else
+            CHANGED_FILES=$(git diff --name-only "${LATEST_TAG}..HEAD")
+          fi
+
+          if echo "$CHANGED_FILES" | grep -q '^bridge/'; then
+            echo "bridge_changed=true" >> $GITHUB_OUTPUT
+            echo "Bridge files changed — will build binaries"
+          else
+            echo "bridge_changed=false" >> $GITHUB_OUTPUT
+            echo "No bridge changes — skipping binary builds"
+            echo "Changed files:"
+            echo "$CHANGED_FILES"
+          fi
 
       - name: Generate changelog
         if: steps.version.outputs.skip == 'false'
@@ -137,7 +159,7 @@ jobs:
   build-macos:
     name: Build macOS (arm64)
     needs: release
-    if: needs.release.outputs.skip == 'false'
+    if: needs.release.outputs.skip == 'false' && needs.release.outputs.bridge_changed == 'true'
     runs-on: macos-latest
     permissions:
       contents: write
@@ -186,7 +208,7 @@ jobs:
   build-windows:
     name: Build Windows (x86_64)
     needs: release
-    if: needs.release.outputs.skip == 'false'
+    if: needs.release.outputs.skip == 'false' && needs.release.outputs.bridge_changed == 'true'
     runs-on: windows-latest
     permissions:
       contents: write
@@ -229,7 +251,7 @@ jobs:
   build-linux:
     name: Build Linux (x86_64)
     needs: release
-    if: needs.release.outputs.skip == 'false'
+    if: needs.release.outputs.skip == 'false' && needs.release.outputs.bridge_changed == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
