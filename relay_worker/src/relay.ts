@@ -190,7 +190,7 @@ export class SessionRelay extends DurableObject<Env> {
   /** Write-through caches (populated on first access, lost on hibernation). */
   private _lastActivity?: number;
   private _handledRequests?: Record<string, number>;
-  private _fcmToken?: string;
+  private _fcmToken?: string | null;  // undefined=unchecked, null=checked-no-token, string=token
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);  // REQUIRED for hibernation — sets this.ctx + this.env
@@ -1081,12 +1081,18 @@ export class SessionRelay extends DurableObject<Env> {
         if (fcmToken) {
           this._fcmToken = fcmToken;
           await this.ctx.storage.put('fcmToken', fcmToken);
+        } else {
+          this._fcmToken = null;  // Cache the miss — prevents KV reads on every message
         }
       } else {
         this._fcmToken = fcmToken;
       }
     }
-    if (!fcmToken) return false;
+    if (!fcmToken) {
+      // Write cooldown even on miss — protects across DO hibernation boundaries
+      await this.ctx.storage.put('lastPushTimestamp', now);
+      return false;
+    }
 
     await this.ctx.storage.put('lastPushTimestamp', now);
 
